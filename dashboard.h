@@ -244,6 +244,12 @@ color:#aaa;
 
 <h2>UPCYCLE Controller</h2>
 
+<div id="faultBanner" style="display:none;background:#b71c1c;padding:15px;border-radius:10px;margin-bottom:15px;text-align:center;border:2px solid #ff5252;">
+<div style="font-size:16px;font-weight:bold;color:#fff;">SAFETY FAULT: <span id="faultText"></span></div>
+<div style="font-size:12px;color:#ffcdd2;margin-top:4px;">Heater shut down. Check thermistor/wiring.</div>
+<button onclick="resetFault()" style="background:#fff;color:#b71c1c;font-weight:bold;padding:8px 16px;margin-top:10px;border:none;border-radius:6px;width:auto;cursor:pointer;">Reset Fault</button>
+</div>
+
 <div class="temp-card">
 <div class="temp-main"><span id="tempBig">0</span>&deg;C</div>
 <div class="temp-sub">Setpoint: <span id="setpointBig">0</span>&deg;C</div>
@@ -398,6 +404,10 @@ document.getElementById("rpmInput").value;
 fetch('/rpm?value='+rpm);
 }
 
+function resetFault(){
+fetch('/resetfault');
+}
+
 let spInputsInitialized = false;
 
 setInterval(()=>{
@@ -405,6 +415,14 @@ setInterval(()=>{
 fetch('/status')
 .then(r=>r.json())
 .then(data=>{
+
+let fb = document.getElementById("faultBanner");
+if(data.fault){
+fb.style.display = "block";
+document.getElementById("faultText").innerText = data.faultMsg;
+} else {
+fb.style.display = "none";
+}
 
 document.getElementById("tempBig").innerHTML =
 data.temp;

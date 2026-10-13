@@ -16,6 +16,11 @@ const float SERIES_RESISTOR = 10000.0;
 const float NOMINAL_RESISTANCE = 100000.0;
 const float NOMINAL_TEMPERATURE = 25.0;
 const float BETA_COEFFICIENT = 3950.0;
+const float MIN_SAFE_TEMP = 5.0;     // Below this = disconnected or open circuit
+const float MAX_SAFE_TEMP = 280.0;   // Above this = overtemperature hazard
+
+bool thermalFault = false;
+String faultReason = "";
 
 // ================= BTS7960 =================
 const int ENABLE_PIN = 4;
@@ -98,7 +103,9 @@ String buildStatus() {
   json += "\"step\":" + String(currentStep) + ",";
   json += "\"step1sp\":" + String(step1Setpoint,1) + ",";
   json += "\"step2sp\":" + String(step2Setpoint,1) + ",";
-  json += "\"stable\":" + String((abs(setpoint - currentTemp) <= STABLE_BAND) ? "true" : "false");
+  json += "\"stable\":" + String((abs(setpoint - currentTemp) <= STABLE_BAND) ? "true" : "false") + ",";
+  json += "\"fault\":" + String(thermalFault ? "true" : "false") + ",";
+  json += "\"faultMsg\":\"" + faultReason + "\"";
   json += "}";
   return json;
 }
@@ -181,7 +188,7 @@ float readTempC() {
 
   adcFiltered = 0.8 * adcFiltered + 0.2 * adc;
 
-  if (adcFiltered <= 0 || adcFiltered >= 4095)
+  if (adcFiltered <= 15 || adcFiltered >= 4080)
     return -100;
 
   float resistance =
@@ -193,6 +200,32 @@ float readTempC() {
      1.0 / (NOMINAL_TEMPERATURE + 273.15));
 
   return tempK - 273.15;
+}
+
+// =====================================================
+// SAFETY FAULT HELPERS
+// =====================================================
+void tripThermalFault(const String& reason) {
+  thermalFault = true;
+  faultReason = reason;
+  heaterEnabled = false;
+  pwmOutput = 0;
+  integral = 0;
+  ledcWrite(RPWM_PIN, 0);
+  ledcWrite(LPWM_PIN, 0);
+  currentStep = 0;
+  Serial.print("SAFETY FAULT: ");
+  Serial.println(reason);
+}
+
+bool resetFault() {
+  if (currentTemp >= MIN_SAFE_TEMP && currentTemp <= MAX_SAFE_TEMP) {
+    thermalFault = false;
+    faultReason = "";
+    integral = 0;
+    return true;
+  }
+  return false;
 }
 
 // =====================================================
@@ -212,6 +245,7 @@ void updateStepperOutput() {
 // PROCESS STEP HELPERS
 // =====================================================
 void startStep1() {
+  if (thermalFault) return;
   currentStep = 1;
 
   setpoint = step1Setpoint;
@@ -232,6 +266,7 @@ void stopStep1() {
 }
 
 void startStep2() {
+  if (thermalFault) return;
   currentStep = 2;
 
   setpoint = step2Setpoint;
@@ -278,6 +313,10 @@ void stopAll() {
 }
 
 void toggleHeater() {
+  if (thermalFault) {
+    heaterEnabled = false;
+    return;
+  }
   heaterEnabled = !heaterEnabled;
   if (!heaterEnabled) {
     pwmOutput = 0;
@@ -326,6 +365,14 @@ String menuLabel(int idx) {
 }
 
 void lcdShowStatus() {
+  if (thermalFault) {
+    lcdLine(0, "! SAFETY FAULT !");
+    lcdLine(1, faultReason.substring(0, 20));
+    lcdLine(2, "T:" + (currentTemp <= -50 ? "ERR" : String(currentTemp, 1)) + "C PWM:0");
+    lcdLine(3, "Hold btn to reset");
+    return;
+  }
+
   String suffix;
   if (!heaterEnabled) suffix = " OFF";
   else if (isStable()) suffix = " OK";
@@ -520,6 +567,9 @@ void onButtonShort() {
 
 void onButtonLong() {
   if (verbose) Serial.println("BTN long press -> status");
+  if (thermalFault) {
+    resetFault();
+  }
   // Long press always goes back to status.
   // If editing, save first so live preview isn't lost.
   if (uiMode == UI_EDIT) {
@@ -616,10 +666,15 @@ void handleSerial() {
     Serial.println(Kd);
   }
 
-  else if (cmd == "R") {
+  else if (cmd == "R" || cmd == "reset") {
     integral = 0;
-
-    Serial.println("PID Reset");
+    if (resetFault()) {
+      Serial.println("Fault reset OK");
+    } else if (thermalFault) {
+      Serial.println("Cannot reset: Temp out of safe range");
+    } else {
+      Serial.println("PID Reset");
+    }
   }
 
   // ===== Stepper =====
@@ -767,6 +822,7 @@ void handleSerial() {
 // =====================================================
 void setup() {
   Serial.begin(115200);
+  Serial.setTimeout(20);
 
   prefs.begin("settings", false);
 
@@ -833,7 +889,19 @@ void setup() {
 
   server.on("/", []() { server.send(200, "text/html", webpage); });
   server.on("/status", []() { server.send(200, "application/json", buildStatus()); });
+  server.on("/resetfault", []() {
+    if (resetFault()) {
+      lcdForce();
+      server.send(200, "text/plain", "OK");
+    } else {
+      server.send(400, "text/plain", "Cannot reset: temperature out of range");
+    }
+  });
   server.on("/heater", []() {
+    if (thermalFault && server.arg("state") == "on") {
+      server.send(400, "text/plain", "Thermal Fault Active");
+      return;
+    }
     heaterEnabled = (server.arg("state") == "on");
     if (!heaterEnabled) { pwmOutput = 0; integral = 0; ledcWrite(RPWM_PIN, 0); }
     lcdForce();
@@ -948,36 +1016,74 @@ void loop() {
     currentTemp = readTempC();
     float temp = currentTemp;
 
-    float error = setpoint - temp;
-
-    if (abs(error) < 30) {
-      integral += error * dt;
+    // Safety check 1: Range limits (Sensor disconnect, short, or extreme overtemp)
+    if (temp < MIN_SAFE_TEMP || temp > MAX_SAFE_TEMP) {
+      if (!thermalFault) {
+        tripThermalFault(temp < MIN_SAFE_TEMP ? "SENSOR DISCONNECTED" : "OVERTEMP HAZARD");
+      }
     }
 
-    integral = constrain(integral, -300, 300);
+    if (thermalFault) {
+      heaterEnabled = false;
+      pwmOutput = 0;
+      integral = 0;
+      ledcWrite(RPWM_PIN, 0);
+    } else {
+      // Safety check 2: Thermal runaway watchdog
+      // If heater is on, temp is >8C below setpoint, and PWM is high:
+      // verify temperature rises by at least 2C every 40 seconds.
+      static unsigned long runawayCheckTime = 0;
+      static float runawayStartTemp = 0;
+      static bool runawayTracking = false;
 
-    float derivative = -(temp - lastTemp) / dt;
+      if (heaterEnabled && (setpoint - temp > 8.0) && (pwmOutput > 150)) {
+        if (!runawayTracking) {
+          runawayTracking = true;
+          runawayCheckTime = now;
+          runawayStartTemp = temp;
+        } else if (now - runawayCheckTime >= 40000) {
+          if (temp - runawayStartTemp < 2.0) {
+            tripThermalFault("THERMAL RUNAWAY");
+          } else {
+            runawayCheckTime = now;
+            runawayStartTemp = temp;
+          }
+        }
+      } else {
+        runawayTracking = false;
+      }
 
-    lastTemp = temp;
+      float error = setpoint - temp;
 
-    float Pterm = Kp * error;
-    float Iterm = Ki * integral;
-    float Dterm = Kd * derivative;
+      if (abs(error) < 30) {
+        integral += error * dt;
+      }
 
-    float output = Pterm + Iterm + Dterm;
+      integral = constrain(integral, -300, 300);
 
-    pwmOutput = constrain(output, 0, 255);
+      float derivative = -(temp - lastTemp) / dt;
 
-  if (heaterEnabled)
-  {
-    ledcWrite(RPWM_PIN, pwmOutput);
-  }
-  else
-  {
-    pwmOutput = 0;
-    integral = 0;          // optional but recommended
-    ledcWrite(RPWM_PIN, 0);
-  }
+      lastTemp = temp;
+
+      float Pterm = Kp * error;
+      float Iterm = Ki * integral;
+      float Dterm = Kd * derivative;
+
+      float output = Pterm + Iterm + Dterm;
+
+      pwmOutput = constrain(output, 0, 255);
+
+      if (heaterEnabled)
+      {
+        ledcWrite(RPWM_PIN, pwmOutput);
+      }
+      else
+      {
+        pwmOutput = 0;
+        integral = 0;          // optional but recommended
+        ledcWrite(RPWM_PIN, 0);
+      }
+    }
 
     // Debug (gated by verbose flag: m / v0 / v1)
     if (verbose) {
