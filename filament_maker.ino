@@ -80,8 +80,8 @@ const char* ap_ssid = "UPCYCLE";
 const char* ap_pass = "12345678";
 
 // LAN / Station Wi-Fi credentials
-const char* sta_ssid = "YOUR_WIFI_SSID";
-const char* sta_pass = "YOUR_WIFI_PASSWORD";
+const char* sta_ssid = "Arthatronic";
+const char* sta_pass = "animatronics";
 const char* mdns_hostname = "filament-maker";
 
 IPAddress AP_IP(192,168,1,1);
@@ -1048,6 +1048,7 @@ void loop() {
 
     currentTemp = readTempC();
     float temp = currentTemp;
+    float error = setpoint - temp;
 
     // Safety check 1: Range limits (Sensor disconnect, short, or extreme overtemp)
     if (temp < MIN_SAFE_TEMP || temp > MAX_SAFE_TEMP) {
@@ -1085,8 +1086,6 @@ void loop() {
       } else {
         runawayTracking = false;
       }
-
-      float error = setpoint - temp;
 
       if (abs(error) < 30) {
         integral += error * dt;
