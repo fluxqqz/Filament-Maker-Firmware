@@ -344,6 +344,10 @@ Update RPM
 </button>
 </div>
 
+<div style="text-align:center;font-size:12px;color:#777;margin:15px 0;">
+Host: <span id="hostDisplay">filament-maker.local</span> &bull; IP: <span id="ipDisplay">192.168.1.1</span>
+</div>
+
 <script>
 
 function heaterOn(){
@@ -515,6 +519,13 @@ s3card.className = "step-card";
 s3el.innerHTML = "OFF";
 s3el.className = "status-off";
 s3dot.className = "dot dot-off";
+}
+
+if(data.ip){
+document.getElementById("ipDisplay").innerText = data.ip;
+}
+if(data.hostname){
+document.getElementById("hostDisplay").innerText = data.hostname;
 }
 
 });

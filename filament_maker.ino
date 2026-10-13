@@ -1,5 +1,6 @@
 #include <math.h>
 #include <WiFi.h>
+#include <ESPmDNS.h>
 #include <WebServer.h>
 #include <ElegantOTA.h>
 #include <Preferences.h>
@@ -78,6 +79,11 @@ WebServer server(80);
 const char* ap_ssid = "UPCYCLE";
 const char* ap_pass = "12345678";
 
+// LAN / Station Wi-Fi credentials
+const char* sta_ssid = "YOUR_WIFI_SSID";
+const char* sta_pass = "YOUR_WIFI_PASSWORD";
+const char* mdns_hostname = "filament-maker";
+
 IPAddress AP_IP(192,168,1,1);
 IPAddress AP_GATEWAY(192,168,1,1);
 IPAddress AP_SUBNET(255,255,255,0);
@@ -105,7 +111,9 @@ String buildStatus() {
   json += "\"step2sp\":" + String(step2Setpoint,1) + ",";
   json += "\"stable\":" + String((abs(setpoint - currentTemp) <= STABLE_BAND) ? "true" : "false") + ",";
   json += "\"fault\":" + String(thermalFault ? "true" : "false") + ",";
-  json += "\"faultMsg\":\"" + faultReason + "\"";
+  json += "\"faultMsg\":\"" + faultReason + "\",";
+  json += "\"ip\":\"" + (WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "192.168.1.1") + "\",";
+  json += "\"hostname\":\"" + String(mdns_hostname) + ".local\"";
   json += "}";
   return json;
 }
@@ -131,7 +139,7 @@ UiMode uiMode = UI_STATUS;
 EditTarget editTarget = EDIT_NONE;
 float editValue = 0;
 
-const int MENU_COUNT = 9;
+const int MENU_COUNT = 10;
 int menuIndex = 0;
 
 unsigned long lastLcdUpdate = 0;
@@ -360,6 +368,7 @@ String menuLabel(int idx) {
     case 6: return String("Heater:") + String(heaterEnabled ? "ON" : "OFF");
     case 7: return String("Motor:") + String(motorRunning ? "ON" : "OFF");
     case 8: return "STOP ALL";
+    case 9: return "IP:" + (WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "192.168.1.1");
     default: return "";
   }
 }
@@ -873,7 +882,7 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(ENC_CLK_PIN), encISR, CHANGE);
   attachInterrupt(digitalPinToInterrupt(ENC_DT_PIN), encISR, CHANGE);
 
-  // WIFI (AP + Web UI + OTA)
+  // WIFI (AP + STA + Web UI + OTA + mDNS)
   WiFi.mode(WIFI_AP_STA);
 
   WiFi.softAPConfig(
@@ -886,6 +895,17 @@ void setup() {
     ap_ssid,
     ap_pass
   );
+
+  if (strlen(sta_ssid) > 0 && strcmp(sta_ssid, "YOUR_WIFI_SSID") != 0) {
+    WiFi.begin(sta_ssid, sta_pass);
+    Serial.print("Connecting to LAN Wi-Fi: ");
+    Serial.println(sta_ssid);
+  }
+
+  if (MDNS.begin(mdns_hostname)) {
+    MDNS.addService("http", "tcp", 80);
+    Serial.printf("mDNS active: http://%s.local\n", mdns_hostname);
+  }
 
   server.on("/", []() { server.send(200, "text/html", webpage); });
   server.on("/status", []() { server.send(200, "application/json", buildStatus()); });
@@ -998,6 +1018,19 @@ void loop() {
   server.handleClient();
   ElegantOTA.loop();
   handleSerial();
+
+  static bool lanConnected = false;
+  if (!lanConnected && WiFi.status() == WL_CONNECTED) {
+    lanConnected = true;
+    Serial.print("Connected to LAN! IP: ");
+    Serial.println(WiFi.localIP());
+    Serial.printf("Web UI: http://%s.local or http://%s\n", mdns_hostname, WiFi.localIP().toString().c_str());
+    lcdForce();
+  } else if (lanConnected && WiFi.status() != WL_CONNECTED) {
+    lanConnected = false;
+    Serial.println("LAN Wi-Fi disconnected");
+    lcdForce();
+  }
 
   pollEncoder();
   pollButton();
