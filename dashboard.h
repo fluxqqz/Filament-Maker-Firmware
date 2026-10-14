@@ -58,15 +58,8 @@ body {
 .brand-title {
   font-size: 24px;
   font-weight: 800;
-  letter-spacing: 1px;
-  color: #fff;
-}
-.brand-desc {
-  font-size: 11px;
-  font-weight: 600;
   letter-spacing: 1.5px;
-  color: var(--navy-light);
-  margin-top: 2px;
+  color: #fff;
   margin-bottom: 24px;
 }
 .sidebar-divider {
@@ -492,42 +485,29 @@ body {
 .btn-apply:hover {
   background: var(--navy-hover);
 }
-.action-row {
-  display: flex;
-  gap: 8px;
+.btn-step-toggle {
+  width: 100%;
+  background: var(--navy-dark);
+  color: #fff;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 11px 0;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
   margin-top: auto;
+  transition: all 0.15s ease;
 }
-.btn-start {
-  flex: 1;
-  background: var(--green);
-  color: #fff;
-  border: none;
-  border-radius: 6px;
-  padding: 10px 0;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: opacity 0.15s ease;
+.btn-step-toggle:hover {
+  background: var(--navy-hover);
 }
-.btn-stop {
-  flex: 1;
-  background: #F0F0F0;
-  color: var(--text-main);
-  border: 1px solid var(--border-card);
-  border-radius: 6px;
-  padding: 10px 0;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: background 0.15s ease;
+.btn-step-toggle.active {
+  background: #FFF0F0;
+  color: #C62828;
+  border: 1px solid rgba(198, 40, 40, 0.35);
 }
-.btn-stop:hover {
-  background: #E5E5E5;
-}
-.step-card.active .btn-stop {
-  background: var(--red);
-  color: #fff;
-  border-color: var(--red);
+.btn-step-toggle.active:hover {
+  background: #FFEBEE;
 }
 
 /* LOWER GRID */
@@ -657,7 +637,7 @@ body {
     justify-content: space-between;
     align-items: center;
   }
-  .brand-desc { margin-bottom: 0; }
+  .brand-title { margin-bottom: 0; }
   .sidebar-footer {
     display: none;
   }
@@ -682,10 +662,7 @@ body {
 <!-- SIDEBAR -->
 <aside class="sidebar">
   <div class="sidebar-header">
-    <div>
-      <div class="brand-title">MOUNTOYA</div>
-      <div class="brand-desc">AIR MINERAL &bull; UPCYCLE</div>
-    </div>
+    <div class="brand-title">MOUNTOYA</div>
   </div>
 
   <div class="sidebar-divider"></div>
@@ -810,10 +787,7 @@ body {
           <button class="btn-apply" onclick="setStep1SP()">Apply</button>
         </div>
 
-        <div class="action-row">
-          <button class="btn-start" onclick="startStep1()">Start</button>
-          <button class="btn-stop" onclick="stopStep1()">Stop</button>
-        </div>
+        <button class="btn-step-toggle" id="step1ToggleBtn" onclick="toggleStep1()">Start Stage 1</button>
       </div>
 
       <!-- Step 2 -->
@@ -831,10 +805,7 @@ body {
           <button class="btn-apply" onclick="setStep2SP()">Apply</button>
         </div>
 
-        <div class="action-row">
-          <button class="btn-start" onclick="startStep2()">Start</button>
-          <button class="btn-stop" onclick="stopStep2()">Stop</button>
-        </div>
+        <button class="btn-step-toggle" id="step2ToggleBtn" onclick="toggleStep2()">Start Stage 2</button>
       </div>
 
       <!-- Step 3 -->
@@ -851,10 +822,7 @@ body {
           Target: <span id="targetRpmText">15.0</span> RPM
         </div>
 
-        <div class="action-row">
-          <button class="btn-start" onclick="startStep3()">Start</button>
-          <button class="btn-stop" onclick="stopStep3()">Stop</button>
-        </div>
+        <button class="btn-step-toggle" id="step3ToggleBtn" onclick="toggleStep3()">Start Stepper</button>
       </div>
     </div>
   </section>
@@ -918,12 +886,34 @@ function heaterOn() { fetch('/heater?state=on'); }
 function heaterOff() { fetch('/heater?state=off'); }
 function stepperOn() { fetch('/stepper?state=on'); }
 function stepperOff() { fetch('/stepper?state=off'); }
-function startStep1() { fetch('/step1?state=on'); }
-function stopStep1() { fetch('/step1?state=off'); }
-function startStep2() { fetch('/step2?state=on'); }
-function stopStep2() { fetch('/step2?state=off'); }
-function startStep3() { fetch('/step3?state=on'); }
-function stopStep3() { fetch('/step3?state=off'); }
+
+let currentStepState = 0;
+let heaterRunningState = false;
+let stepperRunningState = false;
+
+function toggleStep1() {
+  if (currentStepState === 1 && heaterRunningState) {
+    fetch('/step1?state=off');
+  } else {
+    fetch('/step1?state=on');
+  }
+}
+
+function toggleStep2() {
+  if (currentStepState === 2 && heaterRunningState) {
+    fetch('/step2?state=off');
+  } else {
+    fetch('/step2?state=on');
+  }
+}
+
+function toggleStep3() {
+  if (stepperRunningState) {
+    fetch('/step3?state=off');
+  } else {
+    fetch('/step3?state=on');
+  }
+}
 
 function setStep1SP() {
   let v = document.getElementById("step1SPInput").value;
@@ -1030,41 +1020,61 @@ setInterval(() => {
         stageBadge.innerText = "IDLE";
       }
 
+      // Track states for toggle functions
+      currentStepState = data.step;
+      heaterRunningState = data.heater;
+      stepperRunningState = data.stepper;
+
       // Step Cards
       let s1Card = document.getElementById("step1Card");
       let s1Pill = document.getElementById("step1Pill");
+      let s1Btn = document.getElementById("step1ToggleBtn");
       if (data.step === 1 && data.heater) {
         s1Card.className = "step-card active";
         s1Pill.className = "step-pill active";
         s1Pill.innerText = data.stable ? "STABLE" : "HEATING";
+        s1Btn.className = "btn-step-toggle active";
+        s1Btn.innerText = "Stop Stage 1";
       } else {
         s1Card.className = "step-card";
         s1Pill.className = "step-pill";
         s1Pill.innerText = "OFF";
+        s1Btn.className = "btn-step-toggle";
+        s1Btn.innerText = "Start Stage 1";
       }
 
       let s2Card = document.getElementById("step2Card");
       let s2Pill = document.getElementById("step2Pill");
+      let s2Btn = document.getElementById("step2ToggleBtn");
       if (data.step === 2 && data.heater) {
         s2Card.className = "step-card active";
         s2Pill.className = "step-pill active";
         s2Pill.innerText = data.stable ? "STABLE" : "HEATING";
+        s2Btn.className = "btn-step-toggle active";
+        s2Btn.innerText = "Stop Stage 2";
       } else {
         s2Card.className = "step-card";
         s2Pill.className = "step-pill";
         s2Pill.innerText = "OFF";
+        s2Btn.className = "btn-step-toggle";
+        s2Btn.innerText = "Start Stage 2";
       }
 
       let s3Card = document.getElementById("step3Card");
       let s3Pill = document.getElementById("step3Pill");
+      let s3Btn = document.getElementById("step3ToggleBtn");
       if (data.stepper) {
         s3Card.className = "step-card active";
         s3Pill.className = "step-pill active";
         s3Pill.innerText = "RUNNING";
+        s3Btn.className = "btn-step-toggle active";
+        s3Btn.innerText = "Stop Stepper";
       } else {
         s3Card.className = "step-card";
         s3Pill.className = "step-pill";
         s3Pill.innerText = "OFF";
+        s3Btn.className = "btn-step-toggle";
+        s3Btn.innerText = "Start Stepper";
       }
     })
     .catch(err => {

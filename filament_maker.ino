@@ -74,7 +74,7 @@ const char* ap_pass = "12345678";
 // LAN / Station Wi-Fi credentials
 const char* sta_ssid = "Arthatronic";
 const char* sta_pass = "animatronics";
-const char* mdns_hostname = "filament-maker";
+const char* mdns_hostname = "filament-maker-test";
 
 IPAddress AP_IP(192,168,1,1);
 IPAddress AP_GATEWAY(192,168,1,1);
