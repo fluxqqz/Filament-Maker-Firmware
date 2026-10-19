@@ -16,9 +16,7 @@ const char webpage[] PROGMEM = R"rawliteral(
 :root {
   --navy-dark: #0B3658;
   --navy-hover: #164770;
-  --navy-active: #1F4A6B;
   --navy-muted: #40637D;
-  --navy-light: #C7D9E5;
   --navy-faint: #E8F0F5;
   --bg-page: #F7F7F7;
   --bg-card: #FFFFFF;
@@ -40,87 +38,39 @@ body {
   background: var(--bg-page);
   color: var(--text-main);
   min-height: 100vh;
-  display: flex;
 }
 
-/* SIDEBAR */
-.sidebar {
-  width: 250px;
-  background: var(--navy-dark);
-  color: #fff;
-  display: flex;
-  flex-direction: column;
-  padding: 28px 20px;
-  flex-shrink: 0;
-  position: sticky;
-  top: 0;
-  height: 100vh;
-}
+/* COMPACT DEVICE HEADER */
 .brand-title {
-  font-size: 24px;
+  font-size: 20px;
   font-weight: 800;
   letter-spacing: 1.5px;
-  color: #fff;
-  margin-bottom: 24px;
-}
-.sidebar-divider {
-   height: 1px;
-  background: var(--navy-muted);
-  margin-bottom: 24px;
-  opacity: 0.5;
-}
-.nav-section-label {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 1.2px;
-  color: var(--navy-light);
-  margin-bottom: 12px;
-}
-.nav-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
-  border-radius: 8px;
-  color: #D1DEE5;
-  text-decoration: none;
-  font-size: 14px;
-  font-weight: 500;
-  margin-bottom: 6px;
-  transition: all 0.15s ease;
-}
-.nav-item:hover {
-  background: var(--navy-hover);
-  color: #fff;
-}
-.nav-item.active {
-  background: var(--navy-active);
-  color: #fff;
-  font-weight: 600;
-}
-.nav-icon {
-  width: 18px;
-  height: 18px;
-  fill: currentColor;
-}
-.sidebar-footer {
-  margin-top: auto;
-  padding-top: 16px;
-  border-top: 1px solid var(--navy-muted);
-}
-.connection-label {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 1px;
-  color: var(--navy-light);
+  color: var(--navy-dark);
   margin-bottom: 8px;
+}
+.device-status {
+  min-width: 0;
+  max-width: 320px;
 }
 .connection-status {
   display: flex;
   align-items: center;
   gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+.network-details {
+  margin-top: 4px;
   font-size: 12px;
-  color: #fff;
+  color: var(--navy-muted);
+}
+.network-details summary {
+  cursor: pointer;
+  padding: 6px 0;
+}
+.network-details p {
+  overflow-wrap: anywhere;
 }
 .status-dot {
   width: 8px;
@@ -129,6 +79,11 @@ body {
   background: var(--green);
   box-shadow: 0 0 6px rgba(41, 125, 71, 0.8);
   transition: background 0.2s ease, box-shadow 0.2s ease;
+  flex-shrink: 0;
+}
+.status-dot.pending {
+  background: var(--navy-muted);
+  box-shadow: none;
 }
 .status-dot.offline {
   background: var(--red);
@@ -137,9 +92,11 @@ body {
 
 /* MAIN CONTENT */
 .main-wrapper {
-  flex: 1;
+  width: 100%;
+  min-width: 0;
   padding: 32px 40px;
   max-width: 1200px;
+  margin: 0 auto;
 }
 .page-header {
   display: flex;
@@ -162,7 +119,8 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
-  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 .btn-estop {
   background: var(--red);
@@ -217,6 +175,7 @@ body {
   letter-spacing: 0.5px;
   margin-bottom: 24px;
 }
+.live-indicator p { margin-top: 8px; }
 
 /* FAULT ALERT BANNER */
 .fault-banner {
@@ -259,7 +218,7 @@ body {
   margin-bottom: 32px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
   display: grid;
-  grid-template-columns: 280px 1px 1fr 340px;
+  grid-template-columns: minmax(0, 1.1fr) 1px minmax(0, 0.8fr) minmax(0, 1.4fr);
   gap: 28px;
   align-items: center;
 }
@@ -696,69 +655,67 @@ body {
   flex-shrink: 0;
 }
 
+/* INPUT AND KEYBOARD ACCESSIBILITY */
+button, input, summary { min-height: 44px; }
+button, input { font-family: inherit; }
+button { touch-action: manipulation; }
+button:focus-visible, input:focus-visible, summary:focus-visible {
+  outline: 3px solid var(--navy-dark);
+  outline-offset: 3px;
+}
+.text-input { font-size: 16px; }
+.badge-pending {
+  background: var(--navy-faint);
+  color: var(--navy-muted);
+}
+.overview-card > *, .status-tile, .step-card, .panel { min-width: 0; }
+.fault-banner, .section-header, .ctrl-row, .telemetry-row, .rpm-display-box { gap: 12px; }
+.fault-title { overflow-wrap: anywhere; }
+.btn-fault-reset, .stage-badge { flex-shrink: 0; }
+.btn-group { flex-shrink: 0; }
+
 /* RESPONSIVE DESIGN */
-@media (max-width: 960px) {
-  body { flex-direction: column; }
-  .sidebar {
-    width: 100%;
-    height: auto;
-    position: relative;
-    padding: 16px 20px;
-  }
-  .sidebar-divider, .nav-section-label, .nav-item { display: none; }
-  .sidebar-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-  .brand-title { margin-bottom: 0; }
-  .sidebar-footer { display: none; }
-  .main-wrapper { padding: 20px 16px; }
-  .page-header { flex-direction: column; }
+@media (max-width: 1100px) {
   .overview-card {
-    grid-template-columns: 1fr;
-    gap: 20px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 24px;
   }
   .card-divider { display: none; }
-  .process-grid { grid-template-columns: 1fr; }
-  .lower-grid { grid-template-columns: 1fr; }
+  .tiles-col { grid-column: 1 / -1; }
+}
+@media (max-width: 960px) {
+  .main-wrapper { padding: 24px; }
+  .page-header { flex-direction: column; gap: 20px; }
+  .header-actions { width: 100%; justify-content: flex-start; }
+  .device-status { max-width: 100%; }
+  .process-grid, .lower-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 600px) {
+  .main-wrapper { padding: 20px 16px; }
+  .page-title { font-size: 26px; }
+  .page-subtitle { font-size: 14px; }
+  .header-actions { gap: 12px; }
+  .device-status { flex: 1 1 160px; }
+  .btn-estop { margin-left: auto; }
+  .overview-card { grid-template-columns: minmax(0, 1fr); padding: 20px; gap: 20px; }
+  .pwm-col { padding: 0; }
+  .tiles-col { gap: 10px; }
+  .status-tile { padding: 14px 10px; }
+  .tile-value { font-size: 20px; }
+  .fault-banner, .section-header, .ctrl-row { align-items: flex-start; flex-direction: column; }
+  .btn-group { width: 100%; }
+  .btn-ctrl { flex: 1; }
+  .step-card, .panel { padding: 20px; }
+  .telemetry-row, .rpm-display-box { flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { transition: none !important; }
 }
 </style>
 </head>
 
 <body>
-
-<!-- SIDEBAR -->
-<aside class="sidebar">
-  <div class="sidebar-header">
-    <div class="brand-title">MOUNTOYA</div>
-  </div>
-
-  <div class="sidebar-divider"></div>
-
-  <div class="nav-section-label">CONTROL</div>
-  <a href="#overview" class="nav-item active">
-    <svg class="nav-icon" viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
-    Overview
-  </a>
-  <a href="#process" class="nav-item">
-    <svg class="nav-icon" viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
-    Process steps
-  </a>
-  <a href="#manual" class="nav-item">
-    <svg class="nav-icon" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
-    Manual controls
-  </a>
-
-  <div class="sidebar-footer">
-    <div class="connection-label">DEVICE CONNECTION</div>
-    <div class="connection-status">
-      <span class="status-dot" id="connDot"></span>
-      <span id="connStatusText">Connected &bull; Local</span>
-    </div>
-    <div style="font-size:11px;color:var(--navy-light);margin-top:4px;" id="ipDisplay">192.168.1.1</div>
-  </div>
-</aside>
 
 <!-- MAIN CONTENT -->
 <main class="main-wrapper">
@@ -766,20 +723,33 @@ body {
   <!-- PAGE HEADER -->
   <div class="page-header" id="overview">
     <div>
+      <div class="brand-title">MOUNTOYA</div>
       <h1 class="page-title">Controller overview</h1>
       <p class="page-subtitle">Monitor temperature, manage process steps, and control output.</p>
     </div>
     <div class="header-actions">
+      <div class="device-status">
+        <div class="connection-status" role="status">
+          <span class="status-dot pending" id="connDot" aria-hidden="true"></span>
+          <span id="connStatusText">Connecting...</span>
+        </div>
+        <details class="network-details">
+          <summary>Network details</summary>
+          <p id="ipDisplay">Waiting for device address</p>
+        </details>
+      </div>
       <button class="btn-estop" id="estopBtn" onclick="stopAll()" title="Immediately stop heater and stepper motor">
         &#9632; STOP ALL
       </button>
-      <div id="systemBadge" class="badge-online">
-        <span class="status-dot" id="sysBadgeDot"></span>
-        <span id="systemBadgeText">SYSTEM ONLINE</span>
-      </div>
     </div>
   </div>
-  <div class="live-indicator">LIVE STATUS &bull; refreshes every 500 ms</div>
+  <div class="live-indicator">
+    <div id="systemBadge" class="badge-online badge-pending" role="status">
+      <span class="status-dot pending" id="sysBadgeDot" aria-hidden="true"></span>
+      <span id="systemBadgeText">Awaiting device status</span>
+    </div>
+    <p id="liveStatusText">Readings are unconfirmed until the device responds.</p>
+  </div>
 
   <!-- FAULT ALERT BANNER -->
   <div id="faultBanner" class="fault-banner">
@@ -960,14 +930,6 @@ body {
 </main>
 
 <script>
-// Sidebar navigation highlight
-document.querySelectorAll('.nav-item').forEach(link => {
-  link.addEventListener('click', function() {
-    document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-    this.classList.add('active');
-  });
-});
-
 // Helper for button micro-feedback
 function flashButton(btn, success = true) {
   if (!btn) return;
@@ -1073,17 +1035,35 @@ function resetFault() {
 }
 
 let isPolling = false;
+let hasDeviceStatus = false;
 
-setInterval(() => {
+function pollStatus() {
   if (isPolling) return;
   isPolling = true;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3000);
 
-  fetch('/status')
-    .then(r => r.json())
+  fetch('/status', { signal: controller.signal, cache: 'no-store' })
+    .then(r => {
+      if (!r.ok) throw new Error('Status request failed');
+      return r.json();
+    })
     .then(data => {
-      // Connection status recovery
-      document.getElementById("connStatusText").innerText = "Connected \u2022 Local";
+      const numericFields = ['temp', 'setpoint', 'pwm', 'rpm', 'step', 'step1sp', 'step2sp'];
+      const booleanFields = ['heater', 'stepper', 'stable', 'fault'];
+      if (!data || !numericFields.every(key => Number.isFinite(data[key])) ||
+          !booleanFields.every(key => typeof data[key] === 'boolean') ||
+          typeof data.faultMsg !== 'string' ||
+          (data.ip !== undefined && typeof data.ip !== 'string') ||
+          (data.hostname !== undefined && typeof data.hostname !== 'string')) {
+        throw new Error('Invalid device status');
+      }
+
+      // Only a usable response confirms the last-known device state.
+      hasDeviceStatus = true;
+      document.getElementById("connStatusText").innerText = "Connected";
       document.getElementById("connDot").className = "status-dot";
+      document.getElementById("liveStatusText").innerText = "Live readings refresh every 500 ms.";
 
       // Temperature
       document.getElementById("tempBig").innerText = (data.temp <= -50) ? "ERR" : data.temp.toFixed(1);
@@ -1245,14 +1225,23 @@ setInterval(() => {
         s3Btn.innerText = "Start Stepper";
       }
     })
-    .catch(err => {
+    .catch(() => {
       document.getElementById("connStatusText").innerText = "Disconnected";
       document.getElementById("connDot").className = "status-dot offline";
+      document.getElementById("systemBadge").className = "badge-fault";
+      document.getElementById("sysBadgeDot").className = "status-dot offline";
+      document.getElementById("systemBadgeText").innerText = hasDeviceStatus ? "Status stale" : "Status unknown";
+      document.getElementById("liveStatusText").innerText = hasDeviceStatus
+        ? "Connection lost. Readings show the last known state, not live status."
+        : "Device unavailable. Readings and controls do not confirm machine state.";
     })
     .finally(() => {
+      clearTimeout(timeout);
       isPolling = false;
     });
-}, 500);
+}
+pollStatus();
+setInterval(pollStatus, 500);
 </script>
 
 </body>
