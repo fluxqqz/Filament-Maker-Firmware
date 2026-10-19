@@ -4,7 +4,7 @@
 #include <Arduino.h>
 
 // Web dashboard HTML / CSS / JS served to clients at "/"
-// Design: Mountoya UPCYCLE Controller UI (Figma matching)
+// Design: Mountoya UPCYCLE Controller UI (Figma matching + UX & Safety Upgrades)
 const char webpage[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html lang="en">
@@ -34,6 +34,7 @@ const char webpage[] PROGMEM = R"rawliteral(
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   background: var(--bg-page);
@@ -63,7 +64,7 @@ body {
   margin-bottom: 24px;
 }
 .sidebar-divider {
-  height: 1px;
+   height: 1px;
   background: var(--navy-muted);
   margin-bottom: 24px;
   opacity: 0.5;
@@ -127,6 +128,11 @@ body {
   border-radius: 50%;
   background: var(--green);
   box-shadow: 0 0 6px rgba(41, 125, 71, 0.8);
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+.status-dot.offline {
+  background: var(--red);
+  box-shadow: 0 0 6px rgba(198, 40, 40, 0.8);
 }
 
 /* MAIN CONTENT */
@@ -139,6 +145,7 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
+  gap: 16px;
   margin-bottom: 6px;
 }
 .page-title {
@@ -151,13 +158,41 @@ body {
   color: var(--text-muted);
   margin-top: 4px;
 }
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.btn-estop {
+  background: var(--red);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 7px 14px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 2px 6px rgba(198, 40, 40, 0.25);
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+.btn-estop:hover {
+  background: #B71C1C;
+}
+.btn-estop:active {
+  transform: scale(0.97);
+}
 .badge-online {
   background: var(--green-bg);
   color: var(--green);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.5px;
-  padding: 6px 12px;
+  padding: 7px 12px;
   border-radius: 6px;
   display: inline-flex;
   align-items: center;
@@ -168,7 +203,8 @@ body {
   color: var(--red);
   font-size: 11px;
   font-weight: 700;
-  padding: 6px 12px;
+  letter-spacing: 0.5px;
+  padding: 7px 12px;
   border-radius: 6px;
   display: inline-flex;
   align-items: center;
@@ -238,6 +274,7 @@ body {
   color: var(--text-muted);
   text-transform: uppercase;
   margin-bottom: 6px;
+  display: block;
 }
 .temp-value-row {
   display: flex;
@@ -382,6 +419,10 @@ body {
   background: #EFEFEF;
   color: #757575;
 }
+.stage-badge.manual {
+  background: var(--orange-bg);
+  color: var(--orange);
+}
 
 /* PROCESS CARDS GRID */
 .process-grid {
@@ -459,6 +500,7 @@ body {
 }
 .text-input {
   flex: 1;
+  min-width: 0;
   background: #F9FAFB;
   border: 1px solid var(--border-card);
   border-radius: 6px;
@@ -467,9 +509,11 @@ body {
   font-weight: 600;
   color: var(--text-main);
   outline: none;
+  transition: border-color 0.15s ease;
 }
 .text-input:focus {
   border-color: var(--navy-dark);
+  background: #fff;
 }
 .btn-apply {
   background: var(--navy-dark);
@@ -477,13 +521,22 @@ body {
   border: none;
   border-radius: 6px;
   padding: 8px 14px;
+  min-width: 72px;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: all 0.15s ease;
 }
 .btn-apply:hover {
   background: var(--navy-hover);
+}
+.btn-apply.saved {
+  background: var(--green);
+  color: #fff;
+}
+.btn-apply.error {
+  background: var(--red);
+  color: #fff;
 }
 .btn-step-toggle {
   width: 100%;
@@ -523,6 +576,8 @@ body {
   border-radius: 12px;
   padding: 24px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  display: flex;
+  flex-direction: column;
 }
 .panel-title {
   font-size: 17px;
@@ -561,17 +616,7 @@ body {
   display: flex;
   gap: 8px;
 }
-.btn-toggle-on {
-  background: var(--navy-dark);
-  color: #fff;
-  border: none;
-  border-radius: 6px;
-  padding: 8px 14px;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-}
-.btn-toggle-off {
+.btn-ctrl {
   background: #F0F0F0;
   color: var(--text-main);
   border: 1px solid var(--border-card);
@@ -580,10 +625,24 @@ body {
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-ctrl:hover {
+  background: #E5E7EB;
+}
+.btn-ctrl.active-on {
+  background: var(--green);
+  color: #fff;
+  border-color: var(--green);
+}
+.btn-ctrl.active-off {
+  background: var(--navy-dark);
+  color: #fff;
+  border-color: var(--navy-dark);
 }
 .rpm-display-box {
-  margin-top: 14px;
-  padding: 12px;
+  margin-top: auto;
+  padding: 14px 16px;
   background: var(--navy-faint);
   border-radius: 8px;
   display: flex;
@@ -596,9 +655,24 @@ body {
   color: var(--navy-dark);
 }
 .rpm-display-val {
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 800;
   color: var(--navy-dark);
+}
+.telemetry-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  padding: 8px 0;
+  border-bottom: 1px solid #F0F0F0;
+  margin-bottom: 12px;
+}
+.telemetry-label {
+  color: var(--text-muted);
+}
+.telemetry-val {
+  font-weight: 700;
+  color: var(--text-main);
 }
 
 /* SAFETY FOOTER NOTICE */
@@ -638,21 +712,16 @@ body {
     align-items: center;
   }
   .brand-title { margin-bottom: 0; }
-  .sidebar-footer {
-    display: none;
-  }
+  .sidebar-footer { display: none; }
   .main-wrapper { padding: 20px 16px; }
+  .page-header { flex-direction: column; }
   .overview-card {
     grid-template-columns: 1fr;
     gap: 20px;
   }
   .card-divider { display: none; }
-  .process-grid {
-    grid-template-columns: 1fr;
-  }
-  .lower-grid {
-    grid-template-columns: 1fr;
-  }
+  .process-grid { grid-template-columns: 1fr; }
+  .lower-grid { grid-template-columns: 1fr; }
 }
 </style>
 </head>
@@ -684,7 +753,7 @@ body {
   <div class="sidebar-footer">
     <div class="connection-label">DEVICE CONNECTION</div>
     <div class="connection-status">
-      <span class="status-dot"></span>
+      <span class="status-dot" id="connDot"></span>
       <span id="connStatusText">Connected &bull; Local</span>
     </div>
     <div style="font-size:11px;color:var(--navy-light);margin-top:4px;" id="ipDisplay">192.168.1.1</div>
@@ -700,9 +769,14 @@ body {
       <h1 class="page-title">Controller overview</h1>
       <p class="page-subtitle">Monitor temperature, manage process steps, and control output.</p>
     </div>
-    <div id="systemBadge" class="badge-online">
-      <span class="status-dot"></span>
-      <span id="systemBadgeText">SYSTEM ONLINE</span>
+    <div class="header-actions">
+      <button class="btn-estop" id="estopBtn" onclick="stopAll()" title="Immediately stop heater and stepper motor">
+        &#9632; STOP ALL
+      </button>
+      <div id="systemBadge" class="badge-online">
+        <span class="status-dot" id="sysBadgeDot"></span>
+        <span id="systemBadgeText">SYSTEM ONLINE</span>
+      </div>
     </div>
   </div>
   <div class="live-indicator">LIVE STATUS &bull; refreshes every 500 ms</div>
@@ -781,10 +855,10 @@ body {
         <h3 class="step-title">Heating &bull; Stage 1</h3>
         <p class="step-desc">Bring material to the first target temperature.</p>
 
-        <span class="label-sub">SETPOINT (&deg;C)</span>
+        <span class="label-sub">SETPOINT (20&ndash;280 &deg;C)</span>
         <div class="input-row">
-          <input type="number" class="text-input" id="step1SPInput">
-          <button class="btn-apply" onclick="setStep1SP()">Apply</button>
+          <input type="number" min="20" max="280" step="1" class="text-input" id="step1SPInput">
+          <button class="btn-apply" id="step1ApplyBtn" onclick="setStep1SP(this)">Apply</button>
         </div>
 
         <button class="btn-step-toggle" id="step1ToggleBtn" onclick="toggleStep1()">Start Stage 1</button>
@@ -799,10 +873,10 @@ body {
         <h3 class="step-title">Heating &bull; Stage 2</h3>
         <p class="step-desc">Continue heating to the second setpoint.</p>
 
-        <span class="label-sub">SETPOINT (&deg;C)</span>
+        <span class="label-sub">SETPOINT (20&ndash;280 &deg;C)</span>
         <div class="input-row">
-          <input type="number" class="text-input" id="step2SPInput">
-          <button class="btn-apply" onclick="setStep2SP()">Apply</button>
+          <input type="number" min="20" max="280" step="1" class="text-input" id="step2SPInput">
+          <button class="btn-apply" id="step2ApplyBtn" onclick="setStep2SP(this)">Apply</button>
         </div>
 
         <button class="btn-step-toggle" id="step2ToggleBtn" onclick="toggleStep2()">Start Stage 2</button>
@@ -817,9 +891,10 @@ body {
         <h3 class="step-title">Stepper operation</h3>
         <p class="step-desc">Drive the output wheel at the configured RPM.</p>
 
-        <span class="label-sub">OUTPUT WHEEL SPEED</span>
-        <div style="font-size:14px;font-weight:600;margin-bottom:16px;">
-          Target: <span id="targetRpmText">15.0</span> RPM
+        <span class="label-sub">TARGET SPEED (0.5&ndash;60 RPM)</span>
+        <div class="input-row">
+          <input type="number" min="0.5" max="60" step="0.5" class="text-input" id="rpmInput">
+          <button class="btn-apply" id="rpmApplyBtn" onclick="setRPM(this)">Apply</button>
         </div>
 
         <button class="btn-step-toggle" id="step3ToggleBtn" onclick="toggleStep3()">Start Stepper</button>
@@ -827,11 +902,11 @@ body {
     </div>
   </section>
 
-  <!-- LOWER ROW: MANUAL CONTROLS & RPM -->
+  <!-- LOWER ROW: MANUAL CONTROLS & TELEMETRY -->
   <section class="lower-grid" id="manual">
     <div class="panel">
       <h3 class="panel-title">Manual controls</h3>
-      <p class="panel-desc">Direct overrides for maintenance and testing.</p>
+      <p class="panel-desc">Direct hardware overrides for maintenance and testing.</p>
 
       <div class="ctrl-row">
         <div class="ctrl-info">
@@ -839,8 +914,8 @@ body {
           <span class="ctrl-helper">Toggle heater output directly</span>
         </div>
         <div class="btn-group">
-          <button class="btn-toggle-on" onclick="heaterOn()">Heater ON</button>
-          <button class="btn-toggle-off" onclick="heaterOff()">Heater OFF</button>
+          <button class="btn-ctrl" id="btnHeaterOn" onclick="heaterOn()">Heater ON</button>
+          <button class="btn-ctrl active-off" id="btnHeaterOff" onclick="heaterOff()">Heater OFF</button>
         </div>
       </div>
 
@@ -850,24 +925,27 @@ body {
           <span class="ctrl-helper">Toggle motor output directly</span>
         </div>
         <div class="btn-group">
-          <button class="btn-toggle-on" onclick="stepperOn()">Stepper ON</button>
-          <button class="btn-toggle-off" onclick="stepperOff()">Stepper OFF</button>
+          <button class="btn-ctrl" id="btnStepperOn" onclick="stepperOn()">Stepper ON</button>
+          <button class="btn-ctrl active-off" id="btnStepperOff" onclick="stepperOff()">Stepper OFF</button>
         </div>
       </div>
     </div>
 
     <div class="panel">
-      <h3 class="panel-title">Output wheel speed</h3>
-      <p class="panel-desc">Set the target rotation speed.</p>
+      <h3 class="panel-title">Output wheel telemetry</h3>
+      <p class="panel-desc">Live drive speed and thermal readiness status.</p>
 
-      <span class="label-sub">TARGET RPM</span>
-      <div class="input-row">
-        <input type="number" step="0.5" class="text-input" id="rpmInput">
-        <button class="btn-apply" onclick="setRPM()">Update RPM</button>
+      <div class="telemetry-row">
+        <span class="telemetry-label">Configured Target</span>
+        <span class="telemetry-val"><span id="targetRpmText">15.0</span> RPM</span>
+      </div>
+      <div class="telemetry-row">
+        <span class="telemetry-label">Thermal Stability</span>
+        <span class="telemetry-val" id="thermalStateText">Standby</span>
       </div>
 
       <div class="rpm-display-box">
-        <span class="rpm-display-label">CURRENT SPEED</span>
+        <span class="rpm-display-label">CURRENT WHEEL SPEED</span>
         <span class="rpm-display-val"><span id="rpmVal">0.0</span> RPM</span>
       </div>
     </div>
@@ -882,10 +960,58 @@ body {
 </main>
 
 <script>
+// Sidebar navigation highlight
+document.querySelectorAll('.nav-item').forEach(link => {
+  link.addEventListener('click', function() {
+    document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+    this.classList.add('active');
+  });
+});
+
+// Helper for button micro-feedback
+function flashButton(btn, success = true) {
+  if (!btn) return;
+  const origText = btn.dataset.origText || btn.innerText;
+  btn.dataset.origText = origText;
+  btn.classList.remove('saved', 'error');
+  btn.classList.add(success ? 'saved' : 'error');
+  btn.innerText = success ? 'Saved \u2713' : 'Error';
+  setTimeout(() => {
+    btn.classList.remove('saved', 'error');
+    btn.innerText = origText;
+  }, 1500);
+}
+
+// Clamp numeric input to its HTML min/max attributes
+function clampInput(inputEl) {
+  let val = parseFloat(inputEl.value);
+  const min = parseFloat(inputEl.min);
+  const max = parseFloat(inputEl.max);
+  if (isNaN(val)) return null;
+  if (!isNaN(min) && val < min) val = min;
+  if (!isNaN(max) && val > max) val = max;
+  inputEl.value = val;
+  return val;
+}
+
 function heaterOn() { fetch('/heater?state=on'); }
 function heaterOff() { fetch('/heater?state=off'); }
 function stepperOn() { fetch('/stepper?state=on'); }
 function stepperOff() { fetch('/stepper?state=off'); }
+
+function stopAll() {
+  const btn = document.getElementById('estopBtn');
+  btn.innerText = 'STOPPING...';
+  Promise.all([
+    fetch('/step1?state=off'),
+    fetch('/step2?state=off'),
+    fetch('/step3?state=off'),
+    fetch('/heater?state=off'),
+    fetch('/stepper?state=off')
+  ]).finally(() => {
+    setTimeout(() => { btn.innerHTML = '&#9632; STOP ALL'; }, 800);
+  });
+}
 
 let currentStepState = 0;
 let heaterRunningState = false;
@@ -915,33 +1041,52 @@ function toggleStep3() {
   }
 }
 
-function setStep1SP() {
-  let v = document.getElementById("step1SPInput").value;
-  fetch('/step1setpoint?value=' + encodeURIComponent(v));
+function setStep1SP(btn) {
+  const input = document.getElementById("step1SPInput");
+  const v = clampInput(input);
+  if (v === null) { flashButton(btn, false); return; }
+  fetch('/step1setpoint?value=' + encodeURIComponent(v))
+    .then(r => flashButton(btn, r.ok))
+    .catch(() => flashButton(btn, false));
 }
 
-function setStep2SP() {
-  let v = document.getElementById("step2SPInput").value;
-  fetch('/step2setpoint?value=' + encodeURIComponent(v));
+function setStep2SP(btn) {
+  const input = document.getElementById("step2SPInput");
+  const v = clampInput(input);
+  if (v === null) { flashButton(btn, false); return; }
+  fetch('/step2setpoint?value=' + encodeURIComponent(v))
+    .then(r => flashButton(btn, r.ok))
+    .catch(() => flashButton(btn, false));
 }
 
-function setRPM() {
-  let v = document.getElementById("rpmInput").value;
-  fetch('/rpm?value=' + encodeURIComponent(v));
+function setRPM(btn) {
+  const input = document.getElementById("rpmInput");
+  const v = clampInput(input);
+  if (v === null) { flashButton(btn, false); return; }
+  fetch('/rpm?value=' + encodeURIComponent(v))
+    .then(r => flashButton(btn, r.ok))
+    .catch(() => flashButton(btn, false));
 }
 
 function resetFault() {
   fetch('/resetfault');
 }
 
-let spInitialized = false;
+let isPolling = false;
 
 setInterval(() => {
+  if (isPolling) return;
+  isPolling = true;
+
   fetch('/status')
     .then(r => r.json())
     .then(data => {
+      // Connection status recovery
+      document.getElementById("connStatusText").innerText = "Connected \u2022 Local";
+      document.getElementById("connDot").className = "status-dot";
+
       // Temperature
-      document.getElementById("tempBig").innerText = data.temp.toFixed(1);
+      document.getElementById("tempBig").innerText = (data.temp <= -50) ? "ERR" : data.temp.toFixed(1);
       document.getElementById("setpointBig").innerText = data.setpoint.toFixed(1);
 
       // PWM Output
@@ -950,17 +1095,20 @@ setInterval(() => {
       document.getElementById("pwmRaw").innerText = data.pwm;
       document.getElementById("pwmFill").style.width = pct + '%';
 
-      // RPM
-      document.getElementById("rpmVal").innerText = data.rpm.toFixed(1);
+      // RPM & Telemetry
+      document.getElementById("rpmVal").innerText = data.stepper ? data.rpm.toFixed(1) : "0.0";
       document.getElementById("targetRpmText").innerText = data.rpm.toFixed(1);
+      document.getElementById("thermalStateText").innerText = data.heater
+        ? (data.stable ? "Stable at Setpoint" : "Heating to Setpoint")
+        : "Standby";
 
-      // Initialize inputs once
-      if (!spInitialized) {
-        document.getElementById("step1SPInput").value = data.step1sp;
-        document.getElementById("step2SPInput").value = data.step2sp;
-        document.getElementById("rpmInput").value = data.rpm;
-        spInitialized = true;
-      }
+      // Sync inputs unless user is actively editing them
+      const s1Input = document.getElementById("step1SPInput");
+      const s2Input = document.getElementById("step2SPInput");
+      const rInput = document.getElementById("rpmInput");
+      if (document.activeElement !== s1Input) s1Input.value = data.step1sp;
+      if (document.activeElement !== s2Input) s2Input.value = data.step2sp;
+      if (document.activeElement !== rInput) rInput.value = data.rpm;
 
       // Network info
       if (data.ip) {
@@ -971,50 +1119,70 @@ setInterval(() => {
       let fb = document.getElementById("faultBanner");
       let sysBadge = document.getElementById("systemBadge");
       let sysBadgeText = document.getElementById("systemBadgeText");
+      let sysBadgeDot = document.getElementById("sysBadgeDot");
 
       if (data.fault) {
         fb.style.display = "flex";
         document.getElementById("faultText").innerText = data.faultMsg;
         sysBadge.className = "badge-fault";
+        sysBadgeDot.className = "status-dot offline";
         sysBadgeText.innerText = "SAFETY FAULT";
       } else {
         fb.style.display = "none";
         sysBadge.className = "badge-online";
+        sysBadgeDot.className = "status-dot";
         sysBadgeText.innerText = "SYSTEM ONLINE";
       }
 
-      // Tiles
+      // Status Tiles & Dynamic Manual Buttons
       let hTile = document.getElementById("heaterTile");
       let hVal = document.getElementById("heaterTileVal");
+      let btnHOn = document.getElementById("btnHeaterOn");
+      let btnHOff = document.getElementById("btnHeaterOff");
+
       if (data.heater) {
         hTile.className = "status-tile";
         hVal.innerText = "ON";
+        btnHOn.className = "btn-ctrl active-on";
+        btnHOff.className = "btn-ctrl";
       } else {
         hTile.className = "status-tile off";
         hVal.innerText = "OFF";
+        btnHOn.className = "btn-ctrl";
+        btnHOff.className = "btn-ctrl active-off";
       }
 
       let sTile = document.getElementById("stepperTile");
       let sVal = document.getElementById("stepperTileVal");
+      let btnSOn = document.getElementById("btnStepperOn");
+      let btnSOff = document.getElementById("btnStepperOff");
+
       if (data.stepper) {
         sTile.className = "status-tile";
         sVal.innerText = "RUNNING";
+        btnSOn.className = "btn-ctrl active-on";
+        btnSOff.className = "btn-ctrl";
       } else {
         sTile.className = "status-tile off";
         sVal.innerText = "OFF";
+        btnSOn.className = "btn-ctrl";
+        btnSOff.className = "btn-ctrl active-off";
       }
 
-      // Active Stage Badge
+      // Active Stage Badge (including Manual Override detection)
       let stageBadge = document.getElementById("activeStageBadge");
-      if (data.step === 1) {
+      if (data.step === 1 && data.heater) {
         stageBadge.className = "stage-badge";
         stageBadge.innerText = "STEP 1 ACTIVE";
-      } else if (data.step === 2) {
+      } else if (data.step === 2 && data.heater) {
         stageBadge.className = "stage-badge";
         stageBadge.innerText = "STEP 2 ACTIVE";
-      } else if (data.step === 3) {
+      } else if (data.step === 3 && data.stepper) {
         stageBadge.className = "stage-badge";
         stageBadge.innerText = "STEP 3 ACTIVE";
+      } else if (data.heater || data.stepper) {
+        stageBadge.className = "stage-badge manual";
+        stageBadge.innerText = "MANUAL OVERRIDE";
       } else {
         stageBadge.className = "stage-badge idle";
         stageBadge.innerText = "IDLE";
@@ -1079,6 +1247,10 @@ setInterval(() => {
     })
     .catch(err => {
       document.getElementById("connStatusText").innerText = "Disconnected";
+      document.getElementById("connDot").className = "status-dot offline";
+    })
+    .finally(() => {
+      isPolling = false;
     });
 }, 500);
 </script>

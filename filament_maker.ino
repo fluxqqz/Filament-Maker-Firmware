@@ -17,8 +17,9 @@ const float SERIES_RESISTOR = 10000.0;
 const float NOMINAL_RESISTANCE = 100000.0;
 const float NOMINAL_TEMPERATURE = 25.0;
 const float BETA_COEFFICIENT = 3950.0;
-const float MIN_SAFE_TEMP = 5.0;     // Below this = disconnected or open circuit
+const float MIN_SAFE_TEMP = 0.0;     // Below this = disconnected or open circuit
 const float MAX_SAFE_TEMP = 280.0;   // Above this = overtemperature hazard
+const float MAX_SETPOINT = 260.0;    // Maximum user-configurable setpoint
 
 // ================= BTS7960 =================
 const int ENABLE_PIN = 4;
@@ -197,6 +198,7 @@ void tripThermalFault(const String& reason) {
   integral = 0;
   ledcWrite(RPWM_PIN, 0);
   ledcWrite(LPWM_PIN, 0);
+  digitalWrite(ENABLE_PIN, LOW); // Dual-layer hardware shutoff
   Serial.print("SAFETY FAULT: ");
   Serial.println(reason);
   lcdForce();
@@ -213,6 +215,7 @@ bool resetFault() {
   UNLOCK_STATE();
 
   if (ok) {
+    digitalWrite(ENABLE_PIN, HIGH);
     integral = 0;
     lcdForce();
   }
@@ -541,7 +544,7 @@ void onEncoderTurn(int dir) {
   } else if (uiMode == UI_EDIT) {
     if (editTarget == EDIT_S1SP || editTarget == EDIT_S2SP) {
       editValue += dir * 1.0;
-      editValue = constrain(editValue, 0, 300);
+      editValue = constrain(editValue, 0, MAX_SETPOINT);
     } else if (editTarget == EDIT_RPM) {
       editValue += dir * 0.5;
       editValue = constrain(editValue, 0.1, 60);
@@ -709,7 +712,7 @@ void handleSerial() {
   cmd.trim();
 
   if (cmd.startsWith("T")) {
-    float sp = cmd.substring(1).toFloat();
+    float sp = constrain(cmd.substring(1).toFloat(), 0.0f, MAX_SETPOINT);
     LOCK_STATE();
     setpoint = sp;
     UNLOCK_STATE();
@@ -871,6 +874,22 @@ void taskThermal(void* pvParameters) {
       }
     }
 
+    // Safety check 2: Overtemperature runaway (MOSFET short / stuck heat past setpoint)
+    static unsigned long overtempStartTime = 0;
+    if (heater && (temp > sp + 15.0)) {
+      if (overtempStartTime == 0) {
+        overtempStartTime = now;
+      } else if (now - overtempStartTime >= 10000) {
+        if (!fault) {
+          tripThermalFault("OVERTEMP RUNAWAY");
+          fault = true;
+          heater = false;
+        }
+      }
+    } else {
+      overtempStartTime = 0;
+    }
+
     int outPwm = 0;
 
     if (fault || !heater) {
@@ -878,32 +897,33 @@ void taskThermal(void* pvParameters) {
       integral = 0;
       ledcWrite(RPWM_PIN, 0);
     } else {
-      // Safety check 2: Thermal runaway watchdog
-      static unsigned long runawayCheckTime = 0;
-      static float runawayStartTemp = 0;
-      static bool runawayTracking = false;
+      // Safety check 3: Heating rise-rate watchdog (detached cartridge or dangling sensor)
+      // Only enforced when far from setpoint (> 20C below target) and demanding high power (> 180 PWM)
+      static unsigned long riseCheckTime = 0;
+      static float riseStartTemp = 0;
+      static bool riseTracking = false;
 
       LOCK_STATE();
       int lastPwm = pwmOutput;
       UNLOCK_STATE();
 
-      if ((sp - temp > 8.0) && (lastPwm > 150)) {
-        if (!runawayTracking) {
-          runawayTracking = true;
-          runawayCheckTime = now;
-          runawayStartTemp = temp;
-        } else if (now - runawayCheckTime >= 40000) {
-          if (temp - runawayStartTemp < 2.0) {
-            tripThermalFault("THERMAL RUNAWAY");
+      if ((sp - temp > 20.0) && (lastPwm > 180)) {
+        if (!riseTracking) {
+          riseTracking = true;
+          riseCheckTime = now;
+          riseStartTemp = temp;
+        } else if (now - riseCheckTime >= 40000) {
+          if (temp - riseStartTemp < 2.0) {
+            tripThermalFault("HEATING FAILED");
             fault = true;
             heater = false;
           } else {
-            runawayCheckTime = now;
-            runawayStartTemp = temp;
+            riseCheckTime = now;
+            riseStartTemp = temp;
           }
         }
-      } else {
-        runawayTracking = false;
+      } else if (lastPwm < 100 || (sp - temp <= 20.0)) {
+        riseTracking = false;
       }
 
       if (!fault && heater) {
@@ -1093,7 +1113,7 @@ void setup() {
     server.send(200, "text/plain", "OK");
   });
   server.on("/step1setpoint", []() {
-    float val = server.arg("value").toFloat();
+    float val = constrain(server.arg("value").toFloat(), 0.0f, MAX_SETPOINT);
     LOCK_STATE();
     step1Setpoint = val;
     if (currentStep == 1) setpoint = val;
@@ -1104,7 +1124,7 @@ void setup() {
     server.send(200, "text/plain", "OK");
   });
   server.on("/step2setpoint", []() {
-    float val = server.arg("value").toFloat();
+    float val = constrain(server.arg("value").toFloat(), 0.0f, MAX_SETPOINT);
     LOCK_STATE();
     step2Setpoint = val;
     if (currentStep == 2) setpoint = val;
