@@ -2,7 +2,13 @@
 #include <errno.h>
 #include <float.h>
 #include <atomic>
+#include <algorithm>
+#include <vector>
+#ifdef FILAMENT_HOST_TEST
+#include "tests/arduino_stubs.h"
+#else
 #include <WiFi.h>
+#include <esp_wifi.h>
 #include <ESPmDNS.h>
 #include <WebServer.h>
 #include <ElegantOTA.h>
@@ -14,6 +20,7 @@
 #include "secrets.h"
 #else
 #include "secrets.example.h"
+#endif
 #endif
 
 Preferences prefs;
@@ -59,6 +66,9 @@ float rpm = 15.0; // Output wheel RPM
 int pwmOutput = 0;
 bool heaterEnabled = false;
 bool motorRunning = false;
+bool motorTimerRunning = false;
+uint32_t motorTimerTick = 0;
+uint64_t motorElapsedMs = 0;
 bool direction = HIGH;
 int currentStep = 0; // 0=idle, 1=Step 1, 2=Step 2, 3=Step 3
 float step1Setpoint = 100.0;
@@ -87,9 +97,39 @@ const char* ap_ssid = "Filament-Maker-AP";
 const char* ap_pass = WIFI_AP_PASSWORD;
 
 // LAN / Station Wi-Fi credentials
-const char* sta_ssid = WIFI_STA_SSID;
-const char* sta_pass = WIFI_STA_PASSWORD;
 const char* mdns_hostname = "filament-maker";
+
+struct WifiCredentials {
+  char ssid[33] = {};
+  char password[65] = {};
+};
+
+struct WifiNetwork {
+  String ssid;
+  int32_t rssi;
+  wifi_auth_mode_t auth;
+};
+
+enum WifiRequest { WREQ_NONE, WREQ_SCAN, WREQ_CONNECT, WREQ_CANCEL };
+enum WifiSetupState {
+  WIFI_SETUP_IDLE, WIFI_SETUP_SCANNING, WIFI_SETUP_READY,
+  WIFI_SETUP_CONNECTING, WIFI_SETUP_SAVING, WIFI_SETUP_SUCCESS, WIFI_SETUP_FAILED
+};
+
+// The network task owns flash and driver operations; the UI exchanges requests
+// and snapshots under stateMutex, never waits for a scan or connection.
+Preferences wifiPrefs;
+WifiCredentials savedWifi; // Network-task-owned after setup().
+bool wifiStorageReady = false;
+WifiCredentials requestedWifi;
+WifiRequest wifiRequest = WREQ_NONE;
+uint32_t wifiRequestVersion = 0;
+WifiSetupState wifiSetupState = WIFI_SETUP_IDLE;
+std::vector<WifiNetwork> wifiNetworks;
+String wifiSetupMessage;
+String wifiSetupIP;
+const uint32_t WIFI_SCAN_TIMEOUT_MS = 15000;
+const uint32_t WIFI_CONNECT_TIMEOUT_MS = 20000;
 
 IPAddress AP_IP(192,168,1,1);
 IPAddress AP_GATEWAY(192,168,1,1);
@@ -97,25 +137,36 @@ IPAddress AP_SUBNET(255,255,255,0);
 
 // ================= LCD + ENCODER =================
 // LCD 2004 I2C: SDA=GPIO8, SCL=GPIO9
-// Encoder KY-040: CLK=GPIO11, DT=GPIO12, SW=GPIO13
+// Encoder KY-040: CLK=GPIO12, DT=GPIO13, SW=GPIO11
 #define I2C_SDA_PIN 8
 #define I2C_SCL_PIN 9
 
-#define ENC_CLK_PIN 11
-#define ENC_DT_PIN 12
-#define ENC_SW_PIN 13
+#define ENC_CLK_PIN 12
+#define ENC_DT_PIN 13
+#define ENC_SW_PIN 11
 
 LiquidCrystal_I2C lcd(0x27, 20, 4);
 
-enum UiMode { UI_STATUS, UI_MENU, UI_EDIT };
+enum UiMode { UI_STATUS, UI_MENU, UI_EDIT, UI_WIFI_NETWORKS, UI_WIFI_PASSWORD, UI_WIFI_PROGRESS };
 enum EditTarget { EDIT_NONE, EDIT_S1SP, EDIT_S2SP, EDIT_RPM };
 
 UiMode uiMode = UI_STATUS;
 EditTarget editTarget = EDIT_NONE;
 float editValue = 0;
 
-const int MENU_COUNT = 10;
+const int MENU_COUNT = 11;
 int menuIndex = 0;
+
+int wifiNetworkIndex = 0;
+String wifiSelectedSSID;
+bool wifiSelectedSecure = false;
+String wifiPasswordDraft;
+String wifiPasswordMessage;
+// Printable ASCII, with common characters first. The first three choices are actions.
+const char WIFI_PASSWORD_CHARS[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
+const int WIFI_PASSWORD_CHOICES = 3 + sizeof(WIFI_PASSWORD_CHARS) - 1;
+int wifiPasswordChoice = 3;
+uint32_t wifiNameScrollStart = 0;
 
 unsigned long lastLcdUpdate = 0;
 const unsigned long LCD_INTERVAL_MS = 250;
@@ -180,7 +231,18 @@ float readTempC() {
 }
 
 // Caller holds stateMutex: never write an output from an unlocked snapshot.
+void updateMotorRuntimeLocked(uint32_t now) {
+  if (motorRunning && !motorTimerRunning) {
+    motorElapsedMs = 0;
+  } else if (motorTimerRunning) {
+    motorElapsedMs += (uint32_t)(now - motorTimerTick);
+  }
+  motorTimerRunning = motorRunning;
+  motorTimerTick = now;
+}
+
 void updateStepperOutputLocked() {
+  updateMotorRuntimeLocked(millis());
   if (motorRunning) {
     float motorRPM = rpm * GEAR_RATIO;
     float stepFreq = (motorRPM / 60.0) * stepsPerRevolution;
@@ -351,6 +413,190 @@ void toggleMotor() {
 }
 
 // =====================================================
+// WIFI SETUP (driver and credential writes: TaskNetwork only)
+// =====================================================
+bool validWifiPassword(const String& password, bool secure) {
+  if (!secure) return password.length() == 0;
+  if (password.length() >= 8 && password.length() <= 63) return true;
+  if (password.length() != 64) return false;
+  for (unsigned int i = 0; i < 64; i++) {
+    if (!isxdigit((unsigned char)password[i])) return false;
+  }
+  return true;
+}
+
+bool supportedWifiAuth(wifi_auth_mode_t auth) {
+  return auth == WIFI_AUTH_OPEN || auth == WIFI_AUTH_WPA_PSK ||
+         auth == WIFI_AUTH_WPA2_PSK || auth == WIFI_AUTH_WPA_WPA2_PSK ||
+         auth == WIFI_AUTH_WPA3_PSK || auth == WIFI_AUTH_WPA2_WPA3_PSK;
+}
+
+void restoreSavedWifi() {
+  WiFi.disconnect(false, false);
+  WiFi.setAutoReconnect(true);
+  if (savedWifi.ssid[0]) WiFi.begin(savedWifi.ssid, savedWifi.password);
+}
+
+void requestWifiScan() {
+  LOCK_STATE();
+  ++wifiRequestVersion;
+  wifiRequest = WREQ_SCAN;
+  wifiSetupState = WIFI_SETUP_SCANNING;
+  wifiSetupMessage = "";
+  UNLOCK_STATE();
+  wifiNetworkIndex = 0;
+  wifiNameScrollStart = millis();
+  wifiPasswordDraft = "";
+  uiMode = UI_WIFI_NETWORKS;
+  lcdForce();
+}
+
+void cancelWifiSetup() {
+  LOCK_STATE();
+  // Saving is the commit point: an already-accepted successful connection finishes.
+  if (wifiSetupState != WIFI_SETUP_SAVING && wifiSetupState != WIFI_SETUP_SUCCESS) {
+    ++wifiRequestVersion;
+    wifiRequest = WREQ_CANCEL;
+    wifiSetupState = WIFI_SETUP_IDLE;
+    requestedWifi = WifiCredentials{};
+  }
+  UNLOCK_STATE();
+  wifiPasswordDraft = "";
+  wifiPasswordMessage = "";
+  wifiSelectedSSID = "";
+}
+
+void requestWifiConnect() {
+  if (!wifiSelectedSSID.length() || wifiSelectedSSID.length() > 32 ||
+      !validWifiPassword(wifiPasswordDraft, wifiSelectedSecure)) {
+    wifiPasswordMessage = "Use 8-63 or 64 hex";
+    lcdForce();
+    return;
+  }
+  LOCK_STATE();
+  requestedWifi = WifiCredentials{};
+  wifiSelectedSSID.toCharArray(requestedWifi.ssid, sizeof(requestedWifi.ssid));
+  wifiPasswordDraft.toCharArray(requestedWifi.password, sizeof(requestedWifi.password));
+  ++wifiRequestVersion;
+  wifiRequest = WREQ_CONNECT;
+  wifiSetupState = WIFI_SETUP_CONNECTING;
+  wifiSetupMessage = "";
+  UNLOCK_STATE();
+  uiMode = UI_WIFI_PROGRESS;
+  lcdForce();
+}
+
+void processWifiSetup() {
+  static WifiRequest work = WREQ_NONE;
+  static uint32_t workVersion = 0;
+  static uint32_t started = 0;
+  static WifiCredentials trial;
+  LOCK_STATE();
+  WifiRequest request = wifiRequest;
+  uint32_t version = wifiRequestVersion;
+  WifiCredentials credentials = requestedWifi;
+  wifiRequest = WREQ_NONE;
+  UNLOCK_STATE();
+
+  if (request != WREQ_NONE) {
+    bool hadWork = work != WREQ_NONE;
+    if (work == WREQ_SCAN) {
+      esp_wifi_scan_stop();
+      WiFi.scanDelete();
+    }
+    work = WREQ_NONE;
+    trial = WifiCredentials{};
+    if (request == WREQ_CANCEL) {
+      if (hadWork) restoreSavedWifi();
+      return;
+    }
+    WiFi.setAutoReconnect(false);
+    WiFi.disconnect(false, false);
+    workVersion = version;
+    started = millis();
+    work = request;
+    if (request == WREQ_SCAN) {
+      WiFi.scanDelete();
+      WiFi.scanNetworks(true);
+    } else {
+      trial = credentials;
+      WiFi.begin(trial.ssid, trial.password);
+    }
+  }
+
+  if (work == WREQ_SCAN) {
+    int count = WiFi.scanComplete();
+    if (count == WIFI_SCAN_RUNNING && (uint32_t)(millis() - started) < WIFI_SCAN_TIMEOUT_MS) return;
+    if (count == WIFI_SCAN_RUNNING) esp_wifi_scan_stop();
+    std::vector<WifiNetwork> found;
+    // Arduino's public scan-row accessors use uint8_t indices (0..255).
+    for (int i = 0; i < count && i < 256; i++) {
+      String ssid = WiFi.SSID(i);
+      if (!ssid.length() || ssid.length() > 32) continue;
+      wifi_auth_mode_t auth = WiFi.encryptionType(i);
+      auto duplicate = std::find_if(found.begin(), found.end(), [&](const WifiNetwork& item) {
+        return item.ssid == ssid && item.auth == auth;
+      });
+      if (duplicate == found.end()) found.push_back({ssid, WiFi.RSSI(i), auth});
+      else duplicate->rssi = std::max(duplicate->rssi, WiFi.RSSI(i));
+    }
+    std::sort(found.begin(), found.end(), [](const WifiNetwork& a, const WifiNetwork& b) { return a.rssi > b.rssi; });
+    WiFi.scanDelete();
+    LOCK_STATE();
+    if (workVersion == wifiRequestVersion) {
+      wifiNetworks.swap(found);
+      wifiSetupState = count >= 0 ? WIFI_SETUP_READY : WIFI_SETUP_FAILED;
+      wifiSetupMessage = count < 0 ? "Scan failed/timed out" : count > 256 ? "First 256 scan rows" : "";
+    }
+    UNLOCK_STATE();
+    work = WREQ_NONE;
+    restoreSavedWifi();
+    lcdForce();
+  } else if (work == WREQ_CONNECT) {
+    if (WiFi.status() == WL_CONNECTED && WiFi.SSID() == String(trial.ssid)) {
+      LOCK_STATE();
+      bool accepted = workVersion == wifiRequestVersion && wifiSetupState == WIFI_SETUP_CONNECTING;
+      if (accepted) wifiSetupState = WIFI_SETUP_SAVING;
+      UNLOCK_STATE();
+      if (!accepted) return; // A queued cancellation is processed on the next iteration.
+      lcdForce();
+      // One NVS blob keeps the SSID/password pair atomic across power loss.
+      bool saved = wifiStorageReady && wifiPrefs.putBytes("credentials", &trial, sizeof(trial)) == sizeof(trial);
+      if (saved) {
+        savedWifi = trial;
+        WiFi.setAutoReconnect(true);
+      } else {
+        restoreSavedWifi();
+      }
+      String connectedIP = saved ? WiFi.localIP().toString() : "";
+      LOCK_STATE();
+      if (workVersion == wifiRequestVersion) {
+        wifiSetupState = saved ? WIFI_SETUP_SUCCESS : WIFI_SETUP_FAILED;
+        wifiSetupMessage = saved ? "Saved for next boot" : "Could not save WiFi";
+        wifiSetupIP = connectedIP;
+        requestedWifi = WifiCredentials{};
+      }
+      UNLOCK_STATE();
+      trial = WifiCredentials{};
+      work = WREQ_NONE;
+      lcdForce();
+    } else if ((uint32_t)(millis() - started) >= WIFI_CONNECT_TIMEOUT_MS) {
+      LOCK_STATE();
+      if (workVersion == wifiRequestVersion) {
+        wifiSetupState = WIFI_SETUP_FAILED;
+        wifiSetupMessage = "Connect timed out";
+        requestedWifi = WifiCredentials{};
+      }
+      UNLOCK_STATE();
+      trial = WifiCredentials{};
+      work = WREQ_NONE;
+      restoreSavedWifi();
+      lcdForce();
+    }
+  }
+}
+
+// =====================================================
 // LCD RENDERING (TaskUI exclusive — eliminates I2C contention)
 // =====================================================
 void lcdLine(int row, String s) {
@@ -361,6 +607,134 @@ void lcdLine(int row, String s) {
   }
   lcd.setCursor(0, row);
   lcd.print(s);
+}
+
+String lcdNetworkName(String name, unsigned int width, bool scroll = true) {
+  // SSIDs are byte strings; HD44780 cannot render UTF-8 or control characters.
+  for (unsigned int i = 0; i < name.length(); i++) {
+    if ((unsigned char)name[i] < 32 || (unsigned char)name[i] > 126) name[i] = '?';
+  }
+  if (name.length() <= width) return name;
+  if (!scroll) return name.substring(0, width);
+  uint32_t elapsed = (uint32_t)(millis() - wifiNameScrollStart);
+  unsigned int offset = elapsed < 1000 ? 0 : ((elapsed - 1000) / 500) % (name.length() + 3);
+  String scrolling = name + "   " + name;
+  return scrolling.substring(offset, offset + width);
+}
+
+void lcdShowWifiNetworks() {
+  LOCK_STATE();
+  WifiSetupState state = wifiSetupState;
+  String message = wifiSetupMessage;
+  int count = wifiNetworks.size();
+  int top = (wifiNetworkIndex / 2) * 2;
+  String names[2];
+  wifi_auth_mode_t auth = WIFI_AUTH_OPEN;
+  for (int row = 0; row < 2; row++) {
+    int index = top + row;
+    if (index < count) names[row] = wifiNetworks[index].ssid;
+    else if (index == count) names[row] = "Scan again";
+  }
+  if (wifiNetworkIndex < count) auth = wifiNetworks[wifiNetworkIndex].auth;
+  UNLOCK_STATE();
+
+  if (state == WIFI_SETUP_SCANNING) {
+    lcdLine(0, "Scanning Wi-Fi...");
+    lcdLine(1, "2.4 GHz networks");
+    lcdLine(2, "");
+    lcdLine(3, "Hold to cancel");
+  } else if (state == WIFI_SETUP_FAILED || count == 0) {
+    lcdLine(0, state == WIFI_SETUP_FAILED ? "Wi-Fi scan failed" : "No networks found");
+    lcdLine(1, message);
+    lcdLine(2, "Click to rescan");
+    lcdLine(3, "Hold to exit");
+  } else {
+    String security = wifiNetworkIndex == count ? "" :
+      auth == WIFI_AUTH_OPEN ? " OPEN" : supportedWifiAuth(auth) ? " LOCK" : " UNSUPPORTED";
+    lcdLine(0, "WiFi " + String(wifiNetworkIndex + 1) + "/" + String(count + 1) + security);
+    for (int row = 0; row < 2; row++) {
+      bool selected = top + row == wifiNetworkIndex;
+      lcdLine(row + 1, String(selected ? ">" : " ") +
+        lcdNetworkName(names[row], 19, selected));
+    }
+    lcdLine(3, message.length() ? message : "Click:pick Hold:exit");
+  }
+}
+
+void lcdShowWifiPassword() {
+  lcdLine(0, "Wi-Fi password " + String(wifiPasswordDraft.length()) + "/64");
+  String masked;
+  for (unsigned int i = 0; i < std::min((unsigned int)19, wifiPasswordDraft.length()); i++) masked += '*';
+  lcdLine(1, String(wifiPasswordDraft.length() > 19 ? "<" : "") + masked);
+  String choice;
+  if (wifiPasswordChoice == 0) choice = "<CONNECT>";
+  else if (wifiPasswordChoice == 1) choice = "<DELETE>";
+  else if (wifiPasswordChoice == 2) choice = "<CANCEL>";
+  else if (WIFI_PASSWORD_CHARS[wifiPasswordChoice - 3] == ' ') choice = "[space]";
+  else choice = String("[") + WIFI_PASSWORD_CHARS[wifiPasswordChoice - 3] + "]";
+  lcdLine(2, "Choose: " + choice);
+  lcdLine(3, wifiPasswordMessage.length() ? wifiPasswordMessage : "Click:use Hold:exit");
+}
+
+void lcdShowWifiProgress() {
+  LOCK_STATE();
+  WifiSetupState state = wifiSetupState;
+  String message = wifiSetupMessage;
+  String ip = wifiSetupIP;
+  UNLOCK_STATE();
+  lcdLine(0, state == WIFI_SETUP_SUCCESS ? "Wi-Fi connected" :
+    state == WIFI_SETUP_SAVING ? "Saving Wi-Fi..." :
+    state == WIFI_SETUP_FAILED ? "Wi-Fi setup failed" : "Connecting Wi-Fi...");
+  lcdLine(1, lcdNetworkName(wifiSelectedSSID, 20));
+  lcdLine(2, state == WIFI_SETUP_SUCCESS ? ip : message);
+  lcdLine(3, state == WIFI_SETUP_SUCCESS ? "Click to return" :
+    state == WIFI_SETUP_SAVING ? "Please wait" :
+    state == WIFI_SETUP_FAILED ? "Click:retry Hold:exit" : "Hold to cancel");
+  if (state == WIFI_SETUP_SUCCESS) wifiPasswordDraft = "";
+}
+
+void selectWifiNetwork() {
+  LOCK_STATE();
+  WifiSetupState state = wifiSetupState;
+  int count = wifiNetworks.size();
+  bool rescan = state == WIFI_SETUP_FAILED || (state == WIFI_SETUP_READY && wifiNetworkIndex == count);
+  if (state == WIFI_SETUP_READY && wifiNetworkIndex < count) {
+    WifiNetwork selected = wifiNetworks[wifiNetworkIndex];
+    if (!supportedWifiAuth(selected.auth)) {
+      wifiSetupMessage = "Unsupported security";
+      UNLOCK_STATE();
+      lcdForce();
+      return;
+    }
+    wifiSelectedSSID = selected.ssid;
+    wifiSelectedSecure = selected.auth != WIFI_AUTH_OPEN;
+  }
+  UNLOCK_STATE();
+  if (rescan) { requestWifiScan(); return; }
+  if (state != WIFI_SETUP_READY) return;
+  wifiPasswordDraft = "";
+  wifiPasswordMessage = "";
+  wifiPasswordChoice = 3;
+  wifiNameScrollStart = millis();
+  if (wifiSelectedSecure) uiMode = UI_WIFI_PASSWORD;
+  else requestWifiConnect();
+  lcdForce();
+}
+
+void selectWifiPasswordCharacter() {
+  wifiPasswordMessage = "";
+  if (wifiPasswordChoice == 0) requestWifiConnect();
+  else if (wifiPasswordChoice == 1) {
+    if (wifiPasswordDraft.length()) wifiPasswordDraft.remove(wifiPasswordDraft.length() - 1);
+  } else if (wifiPasswordChoice == 2) {
+    cancelWifiSetup();
+    uiMode = UI_MENU;
+  } else if (wifiPasswordDraft.length() < 64) {
+    wifiPasswordDraft += WIFI_PASSWORD_CHARS[wifiPasswordChoice - 3];
+  } else {
+    wifiPasswordMessage = "Password full (64)";
+  }
+  lcdForce();
 }
 
 String menuLabel(int idx) {
@@ -384,6 +758,7 @@ String menuLabel(int idx) {
     case 7: return String("Motor:") + String(mot ? "ON" : "OFF");
     case 8: return "STOP ALL";
     case 9: return "IP:" + (WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "192.168.1.1");
+    case 10: return "Wi-Fi Setup";
     default: return "";
   }
 }
@@ -397,10 +772,9 @@ void lcdShowStatus() {
   bool heat = heaterEnabled;
   bool mot = motorRunning;
   int pwm = pwmOutput;
-  int step = currentStep;
-  float s1sp = step1Setpoint;
-  float s2sp = step2Setpoint;
   float r = rpm;
+  updateMotorRuntimeLocked(millis());
+  uint64_t elapsedSeconds = motorElapsedMs / 1000;
   UNLOCK_STATE();
 
   if (fault) {
@@ -411,23 +785,14 @@ void lcdShowStatus() {
     return;
   }
 
-  String suffix;
-  if (!heat) suffix = " OFF";
-  else if (abs(sp - temp) <= STABLE_BAND) suffix = " OK";
-  else suffix = " HEAT";
-
-  String l0 = "T:" + String(temp, 1) + "->" + String(sp, 1);
-  if (l0.length() + suffix.length() > 20) l0 = l0.substring(0, 20 - suffix.length());
-  l0 += suffix;
-
-  String l1 = "PWM:" + String(pwm) + " H:" + String(heat ? "ON" : "OFF") + " M:" + String(mot ? "ON" : "OFF");
-  String l2 = "St" + String(step) + " S1:" + String(s1sp, 0) + " S2:" + String(s2sp, 0);
-  String l3 = "RPM:" + String(r, 1) + " clk=menu";
-
-  lcdLine(0, l0);
-  lcdLine(1, l1);
-  lcdLine(2, l2);
-  lcdLine(3, l3);
+  char runtime[21];
+  snprintf(runtime, sizeof(runtime), "RUNTIME %02llu:%02u:%02u",
+    (unsigned long long)(elapsedSeconds / 3600), (unsigned int)(elapsedSeconds / 60 % 60),
+    (unsigned int)(elapsedSeconds % 60));
+  lcdLine(0, "TEMP:" + String(temp, 1) + "/" + String(sp, 1) + "C");
+  lcdLine(1, "HEAT:" + String(heat ? "ON" : "OFF") + "  PWM:" + String((pwm * 100 + 127) / 255) + "%");
+  lcdLine(2, "RPM:" + String(mot ? r : 0.0f, 1) + " MOTOR:" + String(mot ? "ON" : "OFF"));
+  lcdLine(3, runtime);
 }
 
 void lcdShowMenu() {
@@ -463,9 +828,19 @@ void lcdRefresh(bool force) {
   if (!force && !requested && (now - lastLcdUpdate < LCD_INTERVAL_MS)) return;
   lastLcdUpdate = now;
 
+  LOCK_STATE(); bool fault = thermalFault; UNLOCK_STATE();
+  if (fault && uiMode != UI_STATUS) {
+    if (uiMode == UI_WIFI_NETWORKS || uiMode == UI_WIFI_PASSWORD || uiMode == UI_WIFI_PROGRESS) cancelWifiSetup();
+    uiMode = UI_STATUS;
+    editTarget = EDIT_NONE;
+  }
+
   if (uiMode == UI_STATUS) lcdShowStatus();
   else if (uiMode == UI_MENU) lcdShowMenu();
   else if (uiMode == UI_EDIT) lcdShowEdit();
+  else if (uiMode == UI_WIFI_NETWORKS) lcdShowWifiNetworks();
+  else if (uiMode == UI_WIFI_PASSWORD) lcdShowWifiPassword();
+  else if (uiMode == UI_WIFI_PROGRESS) lcdShowWifiProgress();
 }
 
 // =====================================================
@@ -516,7 +891,9 @@ void saveEditAndToMenu() {
 void onEncoderTurn(int dir) {
   LOCK_STATE();
   bool verb = verbose;
+  bool fault = thermalFault;
   UNLOCK_STATE();
+  if (fault) return;
   if (verb) {
     Serial.print("ENC turn dir=");
     Serial.println(dir);
@@ -539,6 +916,20 @@ void onEncoderTurn(int dir) {
       editValue += dir * 0.5;
       editValue = constrain(editValue, MIN_RPM, MAX_RPM);
     }
+    lcdForce();
+  } else if (uiMode == UI_WIFI_NETWORKS) {
+    LOCK_STATE();
+    if (wifiSetupState == WIFI_SETUP_READY) {
+      int choices = wifiNetworks.size() + 1; // Includes Scan again.
+      wifiNetworkIndex = (wifiNetworkIndex + dir + choices) % choices;
+      wifiSetupMessage = "";
+    }
+    UNLOCK_STATE();
+    wifiNameScrollStart = millis();
+    lcdForce();
+  } else if (uiMode == UI_WIFI_PASSWORD) {
+    wifiPasswordChoice = (wifiPasswordChoice + dir + WIFI_PASSWORD_CHOICES) % WIFI_PASSWORD_CHOICES;
+    wifiPasswordMessage = "";
     lcdForce();
   }
 }
@@ -574,6 +965,7 @@ void activateMenuItem(int idx) {
     case 9:
       // Informational IP item
       break;
+    case 10: requestWifiScan(); return;
   }
   lcdForce();
 }
@@ -581,7 +973,9 @@ void activateMenuItem(int idx) {
 void onButtonShort() {
   LOCK_STATE();
   bool verb = verbose;
+  bool fault = thermalFault;
   UNLOCK_STATE();
+  if (fault) return;
   if (verb) Serial.println("BTN short press");
 
   if (uiMode == UI_STATUS) {
@@ -593,6 +987,20 @@ void onButtonShort() {
     activateMenuItem(menuIndex);
   } else if (uiMode == UI_EDIT) {
     saveEditAndToMenu();
+  } else if (uiMode == UI_WIFI_NETWORKS) {
+    selectWifiNetwork();
+  } else if (uiMode == UI_WIFI_PASSWORD) {
+    selectWifiPasswordCharacter();
+  } else if (uiMode == UI_WIFI_PROGRESS) {
+    LOCK_STATE(); WifiSetupState state = wifiSetupState; UNLOCK_STATE();
+    if (state == WIFI_SETUP_SUCCESS) {
+      cancelWifiSetup();
+      uiMode = UI_MENU;
+    } else if (state == WIFI_SETUP_FAILED) {
+      if (wifiSelectedSecure) uiMode = UI_WIFI_PASSWORD;
+      else requestWifiConnect();
+    }
+    lcdForce();
   }
 }
 
@@ -606,6 +1014,7 @@ void onButtonLong() {
   if (fault) {
     resetFault();
   }
+  if (uiMode == UI_WIFI_NETWORKS || uiMode == UI_WIFI_PASSWORD || uiMode == UI_WIFI_PROGRESS) cancelWifiSetup();
   uiMode = UI_STATUS;
   editTarget = EDIT_NONE;
   lcd.clear();
@@ -785,7 +1194,7 @@ void handleSerial() {
     Serial.print(" SW="); Serial.print(digitalRead(ENC_SW_PIN));
     Serial.print(" delta="); Serial.println(encDelta);
   } else if (cmd == "E") {
-    Serial.println("Watching ENC 11/12 + SW 13 for 5s...");
+    Serial.printf("Watching ENC %d/%d + SW %d for 5s...\n", ENC_CLK_PIN, ENC_DT_PIN, ENC_SW_PIN);
     Serial.println("Rotate slowly + press the knob now!");
     int lastC = digitalRead(ENC_CLK_PIN);
     int lastD = digitalRead(ENC_DT_PIN);
@@ -849,6 +1258,7 @@ void taskThermal(void* pvParameters) {
 
     LOCK_STATE();
     currentTemp = temp;
+    updateMotorRuntimeLocked(millis());
     float sp = setpoint;
     bool heater = heaterEnabled;
     bool fault = thermalFault;
@@ -990,6 +1400,7 @@ void taskNetwork(void* pvParameters) {
   for (;;) {
     server.handleClient();
     ElegantOTA.loop();
+    processWifiSetup();
 
     static bool lanConnected = false;
     if (!lanConnected && WiFi.status() == WL_CONNECTED) {
@@ -1061,13 +1472,24 @@ void setup() {
 
   // WIFI (AP + STA + Web UI + OTA + mDNS)
   WiFi.mode(WIFI_AP_STA);
+  WiFi.persistent(false); // Preferences owns credential persistence after a verified connection.
   WiFi.softAPConfig(AP_IP, AP_GATEWAY, AP_SUBNET);
   WiFi.softAP(ap_ssid, ap_pass);
 
-  if (strlen(sta_ssid) > 0 && strcmp(sta_ssid, "YOUR_WIFI_SSID") != 0) {
-    WiFi.begin(sta_ssid, sta_pass);
+  wifiStorageReady = wifiPrefs.begin("wifi", false);
+  bool loaded = wifiStorageReady && wifiPrefs.getBytesLength("credentials") == sizeof(savedWifi) &&
+    wifiPrefs.getBytes("credentials", &savedWifi, sizeof(savedWifi)) == sizeof(savedWifi) &&
+    savedWifi.ssid[32] == '\0' && savedWifi.password[64] == '\0' && savedWifi.ssid[0] &&
+    validWifiPassword(savedWifi.password, savedWifi.password[0] != '\0');
+  if (!loaded) {
+    savedWifi = WifiCredentials{};
+    snprintf(savedWifi.ssid, sizeof(savedWifi.ssid), "%s", WIFI_STA_SSID);
+    snprintf(savedWifi.password, sizeof(savedWifi.password), "%s", WIFI_STA_PASSWORD);
+  }
+  if (savedWifi.ssid[0] && strcmp(savedWifi.ssid, "YOUR_WIFI_SSID") != 0) {
+    WiFi.begin(savedWifi.ssid, savedWifi.password);
     Serial.print("Connecting to LAN Wi-Fi: ");
-    Serial.println(sta_ssid);
+    Serial.println(savedWifi.ssid);
   }
 
   if (MDNS.begin(mdns_hostname)) {
