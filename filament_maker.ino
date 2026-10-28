@@ -1,4 +1,7 @@
 #include <math.h>
+#include <errno.h>
+#include <float.h>
+#include <atomic>
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <WebServer.h>
@@ -7,6 +10,11 @@
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 #include "dashboard.h"
+#if __has_include("secrets.h")
+#include "secrets.h"
+#else
+#include "secrets.example.h"
+#endif
 
 Preferences prefs;
 
@@ -20,6 +28,9 @@ const float BETA_COEFFICIENT = 3950.0;
 const float MIN_SAFE_TEMP = 0.0;     // Below this = disconnected or open circuit
 const float MAX_SAFE_TEMP = 280.0;   // Above this = overtemperature hazard
 const float MAX_SETPOINT = 260.0;    // Maximum user-configurable setpoint
+const float MIN_SETPOINT = 0.0;
+const float MIN_RPM = 0.1;
+const float MAX_RPM = 60.0;
 
 // ================= BTS7960 =================
 const int ENABLE_PIN = 4;
@@ -36,7 +47,8 @@ const float GEAR_RATIO = 25.0; // Stepper turns 25x per 1 wheel revolution
 const float STABLE_BAND = 4.0; // Used to show stable/heat indicator
 
 // ================= FREERTOS SHARED STATE =================
-// ponytail: single mutex for all shared variables; microsecond hold times prevent contention
+// ponytail: one mutex serializes state, PID calculations and output writes.
+// Keep sensor reads, LCD, flash writes and network/serial I/O outside the lock.
 SemaphoreHandle_t stateMutex = NULL;
 #define LOCK_STATE()   xSemaphoreTake(stateMutex, portMAX_DELAY)
 #define UNLOCK_STATE() xSemaphoreGive(stateMutex)
@@ -61,21 +73,23 @@ float Kd = 1.5;
 
 bool verbose = false;
 
-// Internal PID variables (accessed only by TaskThermal)
+// PID state and resets are protected by stateMutex.
 float integral = 0;
 float lastTemp = 0;
+bool pidResetRequested = true;
+// Filter state is accessed only by TaskThermal.
 float adcFiltered = 0;
 
 // ================= WIFI + OTA + WEB SERVER =================
 WebServer server(80);
 
-const char* ap_ssid = "UPCYCLE";
-const char* ap_pass = "12345678";
+const char* ap_ssid = "Filament-Maker-AP";
+const char* ap_pass = WIFI_AP_PASSWORD;
 
 // LAN / Station Wi-Fi credentials
-const char* sta_ssid = "Arthatronic";
-const char* sta_pass = "animatronics";
-const char* mdns_hostname = "filament-maker-test";
+const char* sta_ssid = WIFI_STA_SSID;
+const char* sta_pass = WIFI_STA_PASSWORD;
+const char* mdns_hostname = "filament-maker";
 
 IPAddress AP_IP(192,168,1,1);
 IPAddress AP_GATEWAY(192,168,1,1);
@@ -105,7 +119,7 @@ int menuIndex = 0;
 
 unsigned long lastLcdUpdate = 0;
 const unsigned long LCD_INTERVAL_MS = 250;
-volatile bool lcdNeedsRefresh = false;
+std::atomic<bool> lcdNeedsRefresh{false};
 
 void lcdForce() {
   lcdNeedsRefresh = true;
@@ -165,9 +179,10 @@ float readTempC() {
   return tempK - 273.15;
 }
 
-void updateStepperOutput(bool running, float wheelRPM) {
-  if (running) {
-    float motorRPM = wheelRPM * GEAR_RATIO;
+// Caller holds stateMutex: never write an output from an unlocked snapshot.
+void updateStepperOutputLocked() {
+  if (motorRunning) {
+    float motorRPM = rpm * GEAR_RATIO;
     float stepFreq = (motorRPM / 60.0) * stepsPerRevolution;
     ledcWriteTone(STEP_PIN, (uint32_t)stepFreq);
   } else {
@@ -177,30 +192,50 @@ void updateStepperOutput(bool running, float wheelRPM) {
 
 void updateStepperOutput() {
   LOCK_STATE();
-  bool running = motorRunning;
-  float wheelRPM = rpm;
+  updateStepperOutputLocked();
   UNLOCK_STATE();
-  updateStepperOutput(running, wheelRPM);
+}
+
+bool parseNumber(const String& text, float minimum, float maximum, float& value) {
+  String trimmed = text;
+  trimmed.trim();
+  char* end;
+  errno = 0;
+  float parsed = strtof(trimmed.c_str(), &end);
+  if (end == trimmed.c_str() || *end != '\0' || errno == ERANGE ||
+      !isfinite(parsed) || parsed < minimum || parsed > maximum) return false;
+  value = parsed;
+  return true;
+}
+
+float boundedSetting(float value, float minimum, float maximum, float fallback) {
+  return isfinite(value) && value >= minimum && value <= maximum ? value : fallback;
+}
+
+// Caller holds stateMutex, including the fault check and physical shutoff.
+bool setHeaterEnabledLocked(bool on) {
+  if (on && thermalFault) return false;
+  heaterEnabled = on;
+  pidResetRequested = true;
+  integral = 0;
+  if (!on) {
+    pwmOutput = 0;
+    ledcWrite(RPWM_PIN, 0);
+    ledcWrite(LPWM_PIN, 0);
+    digitalWrite(ENABLE_PIN, LOW);
+  }
+  return true;
 }
 
 // =====================================================
 // SAFETY FAULT HELPERS
 // =====================================================
-void tripThermalFault(const String& reason) {
-  LOCK_STATE();
+// Thermal task only; caller holds stateMutex. Logging happens after unlocking.
+void tripThermalFaultLocked(const String& reason) {
   thermalFault = true;
   faultReason = reason;
-  heaterEnabled = false;
-  pwmOutput = 0;
+  setHeaterEnabledLocked(false);
   currentStep = 0;
-  UNLOCK_STATE();
-
-  integral = 0;
-  ledcWrite(RPWM_PIN, 0);
-  ledcWrite(LPWM_PIN, 0);
-  digitalWrite(ENABLE_PIN, LOW); // Dual-layer hardware shutoff
-  Serial.print("SAFETY FAULT: ");
-  Serial.println(reason);
   lcdForce();
 }
 
@@ -210,13 +245,13 @@ bool resetFault() {
   if (currentTemp >= MIN_SAFE_TEMP && currentTemp <= MAX_SAFE_TEMP) {
     thermalFault = false;
     faultReason = "";
+    integral = 0;
+    pidResetRequested = true;
     ok = true;
   }
   UNLOCK_STATE();
 
   if (ok) {
-    digitalWrite(ENABLE_PIN, HIGH);
-    integral = 0;
     lcdForce();
   }
   return ok;
@@ -230,22 +265,18 @@ void startStep1() {
   if (thermalFault) { UNLOCK_STATE(); return; }
   currentStep = 1;
   setpoint = step1Setpoint;
-  heaterEnabled = true;
+  setHeaterEnabledLocked(true);
   UNLOCK_STATE();
 
-  integral = 0;
   lcdForce();
 }
 
 void stopStep1() {
   LOCK_STATE();
   if (currentStep == 1) currentStep = 0;
-  heaterEnabled = false;
-  pwmOutput = 0;
+  setHeaterEnabledLocked(false);
   UNLOCK_STATE();
 
-  integral = 0;
-  ledcWrite(RPWM_PIN, 0);
   lcdForce();
 }
 
@@ -254,22 +285,18 @@ void startStep2() {
   if (thermalFault) { UNLOCK_STATE(); return; }
   currentStep = 2;
   setpoint = step2Setpoint;
-  heaterEnabled = true;
+  setHeaterEnabledLocked(true);
   UNLOCK_STATE();
 
-  integral = 0;
   lcdForce();
 }
 
 void stopStep2() {
   LOCK_STATE();
   if (currentStep == 2) currentStep = 0;
-  heaterEnabled = false;
-  pwmOutput = 0;
+  setHeaterEnabledLocked(false);
   UNLOCK_STATE();
 
-  integral = 0;
-  ledcWrite(RPWM_PIN, 0);
   lcdForce();
 }
 
@@ -277,10 +304,9 @@ void startStep3() {
   LOCK_STATE();
   currentStep = 3;
   motorRunning = true;
-  float curRpm = rpm;
+  updateStepperOutputLocked();
   UNLOCK_STATE();
 
-  updateStepperOutput(true, curRpm);
   lcdForce();
 }
 
@@ -290,53 +316,37 @@ void stopStep3() {
   if (currentStep == 3) {
     currentStep = heaterEnabled ? 2 : 0;
   }
-  float curRpm = rpm;
+  updateStepperOutputLocked();
   UNLOCK_STATE();
 
-  updateStepperOutput(false, curRpm);
   lcdForce();
 }
 
 void stopAll() {
   LOCK_STATE();
   currentStep = 0;
-  heaterEnabled = false;
+  setHeaterEnabledLocked(false);
   motorRunning = false;
-  pwmOutput = 0;
-  float curRpm = rpm;
+  updateStepperOutputLocked();
   UNLOCK_STATE();
 
-  integral = 0;
-  ledcWrite(RPWM_PIN, 0);
-  updateStepperOutput(false, curRpm);
   lcdForce();
 }
 
 void toggleHeater() {
   LOCK_STATE();
-  if (thermalFault) {
-    heaterEnabled = false;
-    UNLOCK_STATE();
-    return;
-  }
-  heaterEnabled = !heaterEnabled;
-  bool en = heaterEnabled;
-  if (!en) pwmOutput = 0;
+  setHeaterEnabledLocked(!heaterEnabled);
   UNLOCK_STATE();
 
-  integral = 0;
-  if (!en) ledcWrite(RPWM_PIN, 0);
   lcdForce();
 }
 
 void toggleMotor() {
   LOCK_STATE();
   motorRunning = !motorRunning;
-  bool running = motorRunning;
-  float curRpm = rpm;
+  updateStepperOutputLocked();
   UNLOCK_STATE();
 
-  updateStepperOutput(running, curRpm);
   lcdForce();
 }
 
@@ -449,9 +459,9 @@ void lcdShowEdit() {
 
 void lcdRefresh(bool force) {
   unsigned long now = millis();
-  if (!force && !lcdNeedsRefresh && (now - lastLcdUpdate < LCD_INTERVAL_MS)) return;
+  bool requested = lcdNeedsRefresh.exchange(false);
+  if (!force && !requested && (now - lastLcdUpdate < LCD_INTERVAL_MS)) return;
   lastLcdUpdate = now;
-  lcdNeedsRefresh = false;
 
   if (uiMode == UI_STATUS) lcdShowStatus();
   else if (uiMode == UI_MENU) lcdShowMenu();
@@ -479,48 +489,28 @@ void saveEditAndToMenu() {
     LOCK_STATE();
     step1Setpoint = editValue;
     if (currentStep == 1) { setpoint = step1Setpoint; }
+    pidResetRequested = true;
     UNLOCK_STATE();
-    integral = 0;
     prefs.putFloat("step1sp", editValue);
   } else if (editTarget == EDIT_S2SP) {
     LOCK_STATE();
     step2Setpoint = editValue;
     if (currentStep == 2) { setpoint = step2Setpoint; }
+    pidResetRequested = true;
     UNLOCK_STATE();
-    integral = 0;
     prefs.putFloat("step2sp", editValue);
   } else if (editTarget == EDIT_RPM) {
-    float v = editValue < 0.1 ? 0.1 : editValue;
+    float v = constrain(editValue, MIN_RPM, MAX_RPM);
     LOCK_STATE();
     rpm = v;
+    updateStepperOutputLocked();
     UNLOCK_STATE();
     prefs.putFloat("rpm", v);
-    updateStepperOutput();
   }
   editTarget = EDIT_NONE;
   uiMode = UI_MENU;
   lcd.clear();
   lcdForce();
-}
-
-void applyEditLive() {
-  if (editTarget == EDIT_S1SP) {
-    LOCK_STATE();
-    step1Setpoint = editValue;
-    if (currentStep == 1) setpoint = step1Setpoint;
-    UNLOCK_STATE();
-  } else if (editTarget == EDIT_S2SP) {
-    LOCK_STATE();
-    step2Setpoint = editValue;
-    if (currentStep == 2) setpoint = step2Setpoint;
-    UNLOCK_STATE();
-  } else if (editTarget == EDIT_RPM) {
-    float v = editValue < 0.1 ? 0.1 : editValue;
-    LOCK_STATE();
-    rpm = v;
-    UNLOCK_STATE();
-    updateStepperOutput();
-  }
 }
 
 void onEncoderTurn(int dir) {
@@ -544,12 +534,11 @@ void onEncoderTurn(int dir) {
   } else if (uiMode == UI_EDIT) {
     if (editTarget == EDIT_S1SP || editTarget == EDIT_S2SP) {
       editValue += dir * 1.0;
-      editValue = constrain(editValue, 0, MAX_SETPOINT);
+      editValue = constrain(editValue, MIN_SETPOINT, MAX_SETPOINT);
     } else if (editTarget == EDIT_RPM) {
       editValue += dir * 0.5;
-      editValue = constrain(editValue, 0.1, 60);
+      editValue = constrain(editValue, MIN_RPM, MAX_RPM);
     }
-    applyEditLive();
     lcdForce();
   }
 }
@@ -616,9 +605,6 @@ void onButtonLong() {
 
   if (fault) {
     resetFault();
-  }
-  if (uiMode == UI_EDIT) {
-    saveEditAndToMenu();
   }
   uiMode = UI_STATUS;
   editTarget = EDIT_NONE;
@@ -712,31 +698,34 @@ void handleSerial() {
   cmd.trim();
 
   if (cmd.startsWith("T")) {
-    float sp = constrain(cmd.substring(1).toFloat(), 0.0f, MAX_SETPOINT);
+    float sp;
+    if (!parseNumber(cmd.substring(1), MIN_SETPOINT, MAX_SETPOINT, sp)) {
+      Serial.println("Invalid setpoint: expected 0-260 C");
+      return;
+    }
     LOCK_STATE();
     setpoint = sp;
+    pidResetRequested = true;
     UNLOCK_STATE();
-    integral = 0;
     Serial.print("Setpoint = ");
     Serial.println(sp);
     lcdForce();
-  } else if (cmd.startsWith("P")) {
-    float p = cmd.substring(1).toFloat();
-    LOCK_STATE(); Kp = p; UNLOCK_STATE();
-    Serial.print("Kp = ");
-    Serial.println(p);
-  } else if (cmd.startsWith("I")) {
-    float iVal = cmd.substring(1).toFloat();
-    LOCK_STATE(); Ki = iVal; UNLOCK_STATE();
-    Serial.print("Ki = ");
-    Serial.println(iVal);
-  } else if (cmd.startsWith("D")) {
-    float d = cmd.substring(1).toFloat();
-    LOCK_STATE(); Kd = d; UNLOCK_STATE();
-    Serial.print("Kd = ");
-    Serial.println(d);
+  } else if (cmd.startsWith("P") || cmd.startsWith("I") || cmd.startsWith("D")) {
+    float gain;
+    if (!parseNumber(cmd.substring(1), 0.0f, FLT_MAX, gain)) {
+      Serial.println("Invalid PID gain: expected a finite non-negative number");
+      return;
+    }
+    LOCK_STATE();
+    if (cmd.startsWith("P")) Kp = gain;
+    else if (cmd.startsWith("I")) Ki = gain;
+    else Kd = gain;
+    pidResetRequested = true;
+    UNLOCK_STATE();
+    Serial.print(cmd.substring(0, 1) + " gain = ");
+    Serial.println(gain);
   } else if (cmd == "R" || cmd == "reset") {
-    integral = 0;
+    LOCK_STATE(); pidResetRequested = true; UNLOCK_STATE();
     if (resetFault()) {
       Serial.println("Fault reset OK");
     } else {
@@ -748,10 +737,15 @@ void handleSerial() {
       }
     }
   } else if (cmd.startsWith("S")) {
-    float r = cmd.substring(1).toFloat();
-    if (r < 0.1) r = 0.1;
-    LOCK_STATE(); rpm = r; UNLOCK_STATE();
-    updateStepperOutput();
+    float r;
+    if (!parseNumber(cmd.substring(1), MIN_RPM, MAX_RPM, r)) {
+      Serial.println("Invalid RPM: expected 0.1-60");
+      return;
+    }
+    LOCK_STATE();
+    rpm = r;
+    updateStepperOutputLocked();
+    UNLOCK_STATE();
     Serial.print("RPM = ");
     Serial.println(r);
     lcdForce();
@@ -764,9 +758,8 @@ void handleSerial() {
   } else if (cmd == "d") {
     LOCK_STATE();
     direction = !direction;
-    bool dir = direction;
+    digitalWrite(DIR_PIN, direction);
     UNLOCK_STATE();
-    digitalWrite(DIR_PIN, dir);
     Serial.println("Direction changed");
   } else if (cmd == "1") {
     startStep1();
@@ -838,7 +831,7 @@ void handleSerial() {
 // FREERTOS TASKS
 // =====================================================
 
-// TaskThermal: Core 1, Priority 5 (hard real-time thermal loop, 100ms exact)
+// TaskThermal: Core 1, Priority 5 (nominal 100ms thermal loop)
 void taskThermal(void* pvParameters) {
   TickType_t xLastWakeTime = xTaskGetTickCount();
   const TickType_t xFrequency = pdMS_TO_TICKS(100);
@@ -863,25 +856,33 @@ void taskThermal(void* pvParameters) {
     int step = currentStep;
     bool verb = verbose;
     float wheelRpm = rpm;
-    UNLOCK_STATE();
+    bool wasFault = fault;
+    static unsigned long overtempStartTime = 0;
+    static unsigned long riseCheckTime = 0;
+    static float riseStartTemp = 0;
+    static bool riseTracking = false;
+    if (pidResetRequested) {
+      integral = 0;
+      lastTemp = temp;
+      pidResetRequested = false;
+    }
 
     // Safety check 1: Range limits (Sensor disconnect, short, or extreme overtemp)
-    if (temp < MIN_SAFE_TEMP || temp > MAX_SAFE_TEMP) {
+    if (!isfinite(temp) || temp < MIN_SAFE_TEMP || temp > MAX_SAFE_TEMP) {
       if (!fault) {
-        tripThermalFault(temp < MIN_SAFE_TEMP ? "SENSOR DISCONNECTED" : "OVERTEMP HAZARD");
+        tripThermalFaultLocked(!isfinite(temp) || temp < MIN_SAFE_TEMP ? "SENSOR DISCONNECTED" : "OVERTEMP HAZARD");
         fault = true;
         heater = false;
       }
     }
 
     // Safety check 2: Overtemperature runaway (MOSFET short / stuck heat past setpoint)
-    static unsigned long overtempStartTime = 0;
     if (heater && (temp > sp + 15.0)) {
       if (overtempStartTime == 0) {
         overtempStartTime = now;
       } else if (now - overtempStartTime >= 10000) {
         if (!fault) {
-          tripThermalFault("OVERTEMP RUNAWAY");
+          tripThermalFaultLocked("OVERTEMP RUNAWAY");
           fault = true;
           heater = false;
         }
@@ -895,17 +896,11 @@ void taskThermal(void* pvParameters) {
     if (fault || !heater) {
       outPwm = 0;
       integral = 0;
-      ledcWrite(RPWM_PIN, 0);
+      riseTracking = false;
     } else {
       // Safety check 3: Heating rise-rate watchdog (detached cartridge or dangling sensor)
       // Only enforced when far from setpoint (> 20C below target) and demanding high power (> 180 PWM)
-      static unsigned long riseCheckTime = 0;
-      static float riseStartTemp = 0;
-      static bool riseTracking = false;
-
-      LOCK_STATE();
       int lastPwm = pwmOutput;
-      UNLOCK_STATE();
 
       if ((sp - temp > 20.0) && (lastPwm > 180)) {
         if (!riseTracking) {
@@ -914,7 +909,7 @@ void taskThermal(void* pvParameters) {
           riseStartTemp = temp;
         } else if (now - riseCheckTime >= 40000) {
           if (temp - riseStartTemp < 2.0) {
-            tripThermalFault("HEATING FAILED");
+            tripThermalFaultLocked("HEATING FAILED");
             fault = true;
             heater = false;
           } else {
@@ -934,27 +929,36 @@ void taskThermal(void* pvParameters) {
         integral = constrain(integral, -300, 300);
 
         float derivative = -(temp - lastTemp) / dt;
-        lastTemp = temp;
 
         float Pterm = kp * error;
         float Iterm = ki * integral;
         float Dterm = kd * derivative;
 
         float output = Pterm + Iterm + Dterm;
-        outPwm = constrain(output, 0, 255);
-
-        ledcWrite(RPWM_PIN, outPwm);
+        if (isfinite(output)) {
+          outPwm = constrain(output, 0, 255);
+        } else {
+          tripThermalFaultLocked("INVALID PID OUTPUT");
+        }
       } else {
         outPwm = 0;
         integral = 0;
-        ledcWrite(RPWM_PIN, 0);
       }
     }
 
-    LOCK_STATE();
+    lastTemp = temp;
+    // The same lock covers the decision and hardware commit, so a stop cannot
+    // be overwritten by a thermal calculation or motor snapshot from before it.
+    digitalWrite(ENABLE_PIN, heaterEnabled && !thermalFault ? HIGH : LOW);
+    ledcWrite(RPWM_PIN, outPwm);
     pwmOutput = outPwm;
+    String newFaultReason = !wasFault && thermalFault ? faultReason : "";
     UNLOCK_STATE();
 
+    if (newFaultReason.length()) {
+      Serial.print("SAFETY FAULT: ");
+      Serial.println(newFaultReason);
+    }
     if (verb) {
       float err = sp - temp;
       Serial.print("Temp:"); Serial.print(temp, 1);
@@ -1014,17 +1018,18 @@ void setup() {
   stateMutex = xSemaphoreCreateMutex();
 
   prefs.begin("settings", false);
-  setpoint = prefs.getFloat("setpoint", 210.0);
-  rpm = prefs.getFloat("rpm", 15.0);
-  step1Setpoint = prefs.getFloat("step1sp", 100.0);
-  step2Setpoint = prefs.getFloat("step2sp", 200.0);
+  setpoint = boundedSetting(prefs.getFloat("setpoint", 210.0), MIN_SETPOINT, MAX_SETPOINT, 210.0);
+  rpm = boundedSetting(prefs.getFloat("rpm", 15.0), MIN_RPM, MAX_RPM, 15.0);
+  step1Setpoint = boundedSetting(prefs.getFloat("step1sp", 100.0), MIN_SETPOINT, MAX_SETPOINT, 100.0);
+  step2Setpoint = boundedSetting(prefs.getFloat("step2sp", 200.0), MIN_SETPOINT, MAX_SETPOINT, 200.0);
   verbose = prefs.getBool("verbose", false);
 
   // BTS7960
   pinMode(ENABLE_PIN, OUTPUT);
-  digitalWrite(ENABLE_PIN, HIGH);
+  digitalWrite(ENABLE_PIN, LOW);
   ledcAttach(RPWM_PIN, 1000, 8);
   ledcAttach(LPWM_PIN, 1000, 8);
+  ledcWrite(RPWM_PIN, 0);
   ledcWrite(LPWM_PIN, 0);
 
   // Thermistor ADC
@@ -1073,6 +1078,10 @@ void setup() {
   // Web routes
   server.on("/", []() { server.send(200, "text/html", webpage); });
   server.on("/status", []() { server.send(200, "application/json", buildStatus()); });
+  server.on("/stopall", HTTP_POST, []() {
+    stopAll();
+    server.send(200, "text/plain", "OK");
+  });
   server.on("/resetfault", []() {
     if (resetFault()) {
       server.send(200, "text/plain", "OK");
@@ -1082,17 +1091,13 @@ void setup() {
   });
   server.on("/heater", []() {
     bool on = (server.arg("state") == "on");
-    LOCK_STATE(); bool fault = thermalFault; UNLOCK_STATE();
-    if (fault && on) {
+    LOCK_STATE();
+    bool ok = setHeaterEnabledLocked(on);
+    UNLOCK_STATE();
+    if (!ok) {
       server.send(400, "text/plain", "Thermal Fault Active");
       return;
     }
-    LOCK_STATE();
-    heaterEnabled = on;
-    if (!heaterEnabled) pwmOutput = 0;
-    UNLOCK_STATE();
-    integral = 0;
-    if (!on) ledcWrite(RPWM_PIN, 0);
     lcdForce();
     server.send(200, "text/plain", "OK");
   });
@@ -1113,33 +1118,46 @@ void setup() {
     server.send(200, "text/plain", "OK");
   });
   server.on("/step1setpoint", []() {
-    float val = constrain(server.arg("value").toFloat(), 0.0f, MAX_SETPOINT);
+    float val;
+    if (!parseNumber(server.arg("value"), MIN_SETPOINT, MAX_SETPOINT, val)) {
+      server.send(400, "text/plain", "Invalid setpoint: expected 0-260 C");
+      return;
+    }
     LOCK_STATE();
     step1Setpoint = val;
     if (currentStep == 1) setpoint = val;
+    pidResetRequested = true;
     UNLOCK_STATE();
-    integral = 0;
     prefs.putFloat("step1sp", val);
     lcdForce();
     server.send(200, "text/plain", "OK");
   });
   server.on("/step2setpoint", []() {
-    float val = constrain(server.arg("value").toFloat(), 0.0f, MAX_SETPOINT);
+    float val;
+    if (!parseNumber(server.arg("value"), MIN_SETPOINT, MAX_SETPOINT, val)) {
+      server.send(400, "text/plain", "Invalid setpoint: expected 0-260 C");
+      return;
+    }
     LOCK_STATE();
     step2Setpoint = val;
     if (currentStep == 2) setpoint = val;
+    pidResetRequested = true;
     UNLOCK_STATE();
-    integral = 0;
     prefs.putFloat("step2sp", val);
     lcdForce();
     server.send(200, "text/plain", "OK");
   });
   server.on("/rpm", []() {
-    float val = server.arg("value").toFloat();
-    if (val < 0.1) val = 0.1;
-    LOCK_STATE(); rpm = val; UNLOCK_STATE();
+    float val;
+    if (!parseNumber(server.arg("value"), MIN_RPM, MAX_RPM, val)) {
+      server.send(400, "text/plain", "Invalid RPM: expected 0.1-60");
+      return;
+    }
+    LOCK_STATE();
+    rpm = val;
+    updateStepperOutputLocked();
+    UNLOCK_STATE();
     prefs.putFloat("rpm", val);
-    updateStepperOutput();
     lcdForce();
     server.send(200, "text/plain", "OK");
   });

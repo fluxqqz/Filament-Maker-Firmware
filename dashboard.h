@@ -52,24 +52,11 @@ body {
   min-width: 0;
   max-width: 320px;
 }
-.connection-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-main);
-}
 .network-details {
-  margin-top: 4px;
+  margin-top: 8px;
   font-size: 12px;
+  line-height: 1.5;
   color: var(--navy-muted);
-}
-.network-details summary {
-  cursor: pointer;
-  padding: 6px 0;
-}
-.network-details p {
   overflow-wrap: anywhere;
 }
 .status-dot {
@@ -656,10 +643,10 @@ body {
 }
 
 /* INPUT AND KEYBOARD ACCESSIBILITY */
-button, input, summary { min-height: 44px; }
+button, input { min-height: 44px; }
 button, input { font-family: inherit; }
 button { touch-action: manipulation; }
-button:focus-visible, input:focus-visible, summary:focus-visible {
+button:focus-visible, input:focus-visible {
   outline: 3px solid var(--navy-dark);
   outline-offset: 3px;
 }
@@ -729,14 +716,11 @@ button:focus-visible, input:focus-visible, summary:focus-visible {
     </div>
     <div class="header-actions">
       <div class="device-status">
-        <div class="connection-status" role="status">
-          <span class="status-dot pending" id="connDot" aria-hidden="true"></span>
-          <span id="connStatusText">Connecting...</span>
+        <div id="systemBadge" class="badge-online badge-pending" role="status">
+          <span class="status-dot pending" id="sysBadgeDot" aria-hidden="true"></span>
+          <span id="systemBadgeText">Awaiting device status</span>
         </div>
-        <details class="network-details">
-          <summary>Network details</summary>
-          <p id="ipDisplay">Waiting for device address</p>
-        </details>
+        <p class="network-details" id="ipDisplay">Waiting for device address</p>
       </div>
       <button class="btn-estop" id="estopBtn" onclick="stopAll()" title="Immediately stop heater and stepper motor">
         &#9632; STOP ALL
@@ -744,11 +728,8 @@ button:focus-visible, input:focus-visible, summary:focus-visible {
     </div>
   </div>
   <div class="live-indicator">
-    <div id="systemBadge" class="badge-online badge-pending" role="status">
-      <span class="status-dot pending" id="sysBadgeDot" aria-hidden="true"></span>
-      <span id="systemBadgeText">Awaiting device status</span>
-    </div>
     <p id="liveStatusText">Readings are unconfirmed until the device responds.</p>
+    <p id="stopStatusText" role="status"></p>
   </div>
 
   <!-- FAULT ALERT BANNER -->
@@ -825,9 +806,9 @@ button:focus-visible, input:focus-visible, summary:focus-visible {
         <h3 class="step-title">Heating &bull; Stage 1</h3>
         <p class="step-desc">Bring material to the first target temperature.</p>
 
-        <span class="label-sub">SETPOINT (20&ndash;280 &deg;C)</span>
+        <label class="label-sub" for="step1SPInput">SETPOINT (0&ndash;260 &deg;C)</label>
         <div class="input-row">
-          <input type="number" min="20" max="280" step="1" class="text-input" id="step1SPInput">
+          <input type="number" min="0" max="260" step="1" class="text-input" id="step1SPInput" oninput="markInputEdited(this)">
           <button class="btn-apply" id="step1ApplyBtn" onclick="setStep1SP(this)">Apply</button>
         </div>
 
@@ -843,9 +824,9 @@ button:focus-visible, input:focus-visible, summary:focus-visible {
         <h3 class="step-title">Heating &bull; Stage 2</h3>
         <p class="step-desc">Continue heating to the second setpoint.</p>
 
-        <span class="label-sub">SETPOINT (20&ndash;280 &deg;C)</span>
+        <label class="label-sub" for="step2SPInput">SETPOINT (0&ndash;260 &deg;C)</label>
         <div class="input-row">
-          <input type="number" min="20" max="280" step="1" class="text-input" id="step2SPInput">
+          <input type="number" min="0" max="260" step="1" class="text-input" id="step2SPInput" oninput="markInputEdited(this)">
           <button class="btn-apply" id="step2ApplyBtn" onclick="setStep2SP(this)">Apply</button>
         </div>
 
@@ -861,9 +842,9 @@ button:focus-visible, input:focus-visible, summary:focus-visible {
         <h3 class="step-title">Stepper operation</h3>
         <p class="step-desc">Drive the output wheel at the configured RPM.</p>
 
-        <span class="label-sub">TARGET SPEED (0.5&ndash;60 RPM)</span>
+        <label class="label-sub" for="rpmInput">TARGET SPEED (0.1&ndash;60 RPM)</label>
         <div class="input-row">
-          <input type="number" min="0.5" max="60" step="0.5" class="text-input" id="rpmInput">
+          <input type="number" min="0.1" max="60" step="0.1" class="text-input" id="rpmInput" oninput="markInputEdited(this)">
           <button class="btn-apply" id="rpmApplyBtn" onclick="setRPM(this)">Apply</button>
         </div>
 
@@ -946,10 +927,11 @@ function flashButton(btn, success = true) {
 
 // Clamp numeric input to its HTML min/max attributes
 function clampInput(inputEl) {
-  let val = parseFloat(inputEl.value);
+  if (String(inputEl.value).trim() === '') return null;
+  let val = Number(inputEl.value);
   const min = parseFloat(inputEl.min);
   const max = parseFloat(inputEl.max);
-  if (isNaN(val)) return null;
+  if (!Number.isFinite(val)) return null;
   if (!isNaN(min) && val < min) val = min;
   if (!isNaN(max) && val > max) val = max;
   inputEl.value = val;
@@ -963,16 +945,27 @@ function stepperOff() { fetch('/stepper?state=off'); }
 
 function stopAll() {
   const btn = document.getElementById('estopBtn');
+  if (btn.disabled) return;
+  const status = document.getElementById('stopStatusText');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3000);
+  btn.disabled = true;
   btn.innerText = 'STOPPING...';
-  Promise.all([
-    fetch('/step1?state=off'),
-    fetch('/step2?state=off'),
-    fetch('/step3?state=off'),
-    fetch('/heater?state=off'),
-    fetch('/stepper?state=off')
-  ]).finally(() => {
-    setTimeout(() => { btn.innerHTML = '&#9632; STOP ALL'; }, 800);
-  });
+  status.innerText = 'Waiting for the device to acknowledge Stop All...';
+  fetch('/stopall', { method: 'POST', signal: controller.signal })
+    .then(r => {
+      if (!r.ok) throw new Error('Stop failed');
+      status.innerText = 'Stop All acknowledged by the device.';
+      btn.innerHTML = '&#9632; STOP ALL';
+    })
+    .catch(() => {
+      status.innerText = 'STOP UNCONFIRMED. Retry or use the physical power cutoff.';
+      btn.innerText = 'RETRY STOP ALL';
+    })
+    .finally(() => {
+      clearTimeout(timeout);
+      btn.disabled = false;
+    });
 }
 
 let currentStepState = 0;
@@ -1003,32 +996,48 @@ function toggleStep3() {
   }
 }
 
-function setStep1SP(btn) {
-  const input = document.getElementById("step1SPInput");
-  const v = clampInput(input);
-  if (v === null) { flashButton(btn, false); return; }
-  fetch('/step1setpoint?value=' + encodeURIComponent(v))
-    .then(r => flashButton(btn, r.ok))
-    .catch(() => flashButton(btn, false));
+function markInputEdited(input) {
+  input.dataset.dirty = 'true';
+  input.dataset.editVersion = String(Number(input.dataset.editVersion || 0) + 1);
 }
 
-function setStep2SP(btn) {
-  const input = document.getElementById("step2SPInput");
-  const v = clampInput(input);
-  if (v === null) { flashButton(btn, false); return; }
-  fetch('/step2setpoint?value=' + encodeURIComponent(v))
-    .then(r => flashButton(btn, r.ok))
-    .catch(() => flashButton(btn, false));
+function syncInput(input, value, pollVersion) {
+  if (!input.dataset.dirty && document.activeElement !== input &&
+      pollVersion > Number(input.dataset.syncAfter || 0)) {
+    input.value = value;
+  }
 }
 
-function setRPM(btn) {
-  const input = document.getElementById("rpmInput");
+function applyInput(inputId, endpoint, btn) {
+  if (btn.disabled) return;
+  const input = document.getElementById(inputId);
   const v = clampInput(input);
   if (v === null) { flashButton(btn, false); return; }
-  fetch('/rpm?value=' + encodeURIComponent(v))
-    .then(r => flashButton(btn, r.ok))
-    .catch(() => flashButton(btn, false));
+  input.dataset.dirty = 'true';
+  const editVersion = input.dataset.editVersion;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3000);
+  btn.disabled = true;
+  fetch(endpoint + '?value=' + encodeURIComponent(v), { signal: controller.signal })
+    .then(r => {
+      if (!r.ok) throw new Error('Save failed');
+      if (input.dataset.editVersion === editVersion) {
+        delete input.dataset.dirty;
+        // Ignore status requests started before the save was acknowledged.
+        input.dataset.syncAfter = String(statusPollVersion);
+      }
+      flashButton(btn, true);
+    })
+    .catch(() => flashButton(btn, false))
+    .finally(() => {
+      clearTimeout(timeout);
+      btn.disabled = false;
+    });
 }
+
+function setStep1SP(btn) { applyInput('step1SPInput', '/step1setpoint', btn); }
+function setStep2SP(btn) { applyInput('step2SPInput', '/step2setpoint', btn); }
+function setRPM(btn) { applyInput('rpmInput', '/rpm', btn); }
 
 function resetFault() {
   fetch('/resetfault');
@@ -1036,10 +1045,12 @@ function resetFault() {
 
 let isPolling = false;
 let hasDeviceStatus = false;
+let statusPollVersion = 0;
 
 function pollStatus() {
   if (isPolling) return;
   isPolling = true;
+  const pollVersion = ++statusPollVersion;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 3000);
 
@@ -1061,8 +1072,6 @@ function pollStatus() {
 
       // Only a usable response confirms the last-known device state.
       hasDeviceStatus = true;
-      document.getElementById("connStatusText").innerText = "Connected";
-      document.getElementById("connDot").className = "status-dot";
       document.getElementById("liveStatusText").innerText = "Live readings refresh every 500 ms.";
 
       // Temperature
@@ -1082,13 +1091,10 @@ function pollStatus() {
         ? (data.stable ? "Stable at Setpoint" : "Heating to Setpoint")
         : "Standby";
 
-      // Sync inputs unless user is actively editing them
-      const s1Input = document.getElementById("step1SPInput");
-      const s2Input = document.getElementById("step2SPInput");
-      const rInput = document.getElementById("rpmInput");
-      if (document.activeElement !== s1Input) s1Input.value = data.step1sp;
-      if (document.activeElement !== s2Input) s2Input.value = data.step2sp;
-      if (document.activeElement !== rInput) rInput.value = data.rpm;
+      // Keep unsaved edits even after the input loses focus.
+      syncInput(document.getElementById("step1SPInput"), data.step1sp, pollVersion);
+      syncInput(document.getElementById("step2SPInput"), data.step2sp, pollVersion);
+      syncInput(document.getElementById("rpmInput"), data.rpm, pollVersion);
 
       // Network info
       if (data.ip) {
@@ -1226,8 +1232,6 @@ function pollStatus() {
       }
     })
     .catch(() => {
-      document.getElementById("connStatusText").innerText = "Disconnected";
-      document.getElementById("connDot").className = "status-dot offline";
       document.getElementById("systemBadge").className = "badge-fault";
       document.getElementById("sysBadgeDot").className = "status-dot offline";
       document.getElementById("systemBadgeText").innerText = hasDeviceStatus ? "Status stale" : "Status unknown";

@@ -59,13 +59,17 @@ describe('Dashboard Web UI & Polling Regression Suite', () => {
   it('initial markup truthful awaiting state/no sidebar', () => {
     const { els } = createDOM();
     const expected = {
-      connStatusText: 'Connecting...', systemBadgeText: 'Awaiting device status',
+      systemBadgeText: 'Awaiting device status',
       liveStatusText: 'Readings are unconfirmed until the device responds.', ipDisplay: 'Waiting for device address',
       tempBig: '0.0', setpointBig: '0.0', pwmPct: '0', heaterTileVal: 'OFF', stepperTileVal: 'OFF', activeStageBadge: 'IDLE'
     };
     for (const [k, v] of Object.entries(expected)) assert.equal(els[k].innerText, v);
-    for (const k of ['connDot', 'systemBadge', 'sysBadgeDot']) assert.match(els[k].className, /\bpending\b/);
-    assert.doesNotMatch(html, /<aside\b|\bid=["']sidebar["']|\bclass=["'][^"']*\bsidebar\b|<nav\b/i);
+    for (const k of ['systemBadge', 'sysBadgeDot']) assert.match(els[k].className, /\bpending\b/);
+    assert.doesNotMatch(html, /<aside\b|\bid=["']sidebar["']|\bclass=["'][^"']*\bsidebar\b|<nav\b|<details\b|<summary\b|connStatusText|connDot/i);
+    assert.match(html, /<p class="network-details" id="ipDisplay">/);
+    for (const id of ['step1SPInput', 'step2SPInput', 'rpmInput']) {
+      assert.match(html, new RegExp(`id="${id}" oninput="markInputEdited\\(this\\)"`));
+    }
   });
 
   it('all JS literal getElementById references exist unique in HTML', () => {
@@ -77,7 +81,7 @@ describe('Dashboard Web UI & Polling Regression Suite', () => {
   it('usable response restores connected/online', async () => {
     const env = setupEnv();
     await env.flush();
-    for (const [k, v] of Object.entries({ connStatusText: 'Connected', connDot: 'status-dot', systemBadge: 'badge-online', systemBadgeText: 'SYSTEM ONLINE', liveStatusText: 'Live readings refresh every 500 ms.' })) {
+    for (const [k, v] of Object.entries({ systemBadge: 'badge-online', systemBadgeText: 'SYSTEM ONLINE', liveStatusText: 'Live readings refresh every 500 ms.' })) {
       assert.equal(k.includes('Dot') || k === 'systemBadge' ? env.els[k].className : env.els[k].innerText, v);
     }
     const expected = {
@@ -126,7 +130,6 @@ describe('Dashboard Web UI & Polling Regression Suite', () => {
 
     env.poll();
     await env.flush();
-    assert.equal(env.els.connStatusText.innerText, 'Disconnected');
     assert.equal(env.els.systemBadgeText.innerText, 'Status stale');
     assert.equal(env.els.faultBanner.style.display, 'flex');
     assert.equal(env.els.faultText.innerText, 'OVERTEMP HAZARD');
@@ -162,17 +165,15 @@ describe('Dashboard Web UI & Polling Regression Suite', () => {
     const abortTimeout = [...env.timeouts.values()].find(t => t.ms === 3000);
     assert.ok(abortTimeout, 'Must schedule 3000ms abort timeout');
     assert.equal(aborted, false);
-    assert.equal(env.els.connStatusText.innerText, 'Connecting...');
+    assert.equal(env.els.systemBadgeText.innerText, 'Awaiting device status');
 
     abortTimeout.fn();
     await env.flush();
     assert.equal(aborted, true);
-    assert.equal(env.els.connStatusText.innerText, 'Disconnected');
     assert.equal(env.els.systemBadgeText.innerText, 'Status unknown');
 
     env.poll();
     await env.flush();
-    assert.equal(env.els.connStatusText.innerText, 'Connected');
     assert.equal(env.els.systemBadgeText.innerText, 'SYSTEM ONLINE');
     assert.equal(env.els.tempBig.innerText, '215.3');
   });
@@ -199,21 +200,182 @@ describe('Dashboard Web UI & Polling Regression Suite', () => {
     assert.equal(env.els.step1SPInput.value, 120, 'Blurred step1SPInput must update on next poll');
   });
 
-  it('Stop All still all five endpoints', async () => {
+  it('unsaved arrow and typed edits survive blur and polling for all three fields', async () => {
     const env = setupEnv();
+    await env.flush();
+    for (const [id, value] of [['step1SPInput', '101'], ['step2SPInput', '199'], ['rpmInput', '15.5']]) {
+      const input = env.els[id];
+      input.value = value;
+      env.ctx.markInputEdited(input);
+      env.doc.activeElement = null;
+      env.poll();
+      await env.flush();
+      assert.equal(input.value, value, `${id} draft reset after blur`);
+    }
+    env.els.rpmInput.value = '';
+    env.ctx.markInputEdited(env.els.rpmInput);
+    env.poll();
+    await env.flush();
+    assert.equal(env.els.rpmInput.value, '', 'Keep an unfinished edit too');
+    assert.ok(env.calls.every(call => call.url === '/status'), 'Editing must not send machine commands');
+  });
+
+  it('failed or timed-out saves retain edits and allow retry', async () => {
+    for (const failure of ['http', 'network', 'timeout']) {
+      const env = setupEnv((url, opts) => {
+        if (url === '/status') return Promise.resolve({ ok: true, json: async () => STATUS });
+        if (failure === 'http') return Promise.resolve({ ok: false });
+        if (failure === 'network') return Promise.reject(new Error('offline'));
+        return new Promise((_, reject) => opts.signal.addEventListener('abort', () => reject(new Error('timeout'))));
+      });
+      await env.flush();
+      const input = env.els.step1SPInput, btn = env.els.step1ApplyBtn;
+      input.value = '125';
+      env.ctx.markInputEdited(input);
+      env.ctx.setStep1SP(btn);
+      if (failure === 'timeout') [...env.timeouts.values()].find(t => t.ms === 3000).fn();
+      await env.flush();
+      env.poll();
+      await env.flush();
+      assert.equal(Number(input.value), 125, failure);
+      assert.equal(input.dataset.dirty, 'true');
+      assert.equal(btn.disabled, false);
+      assert.equal(btn.innerText, 'Error');
+    }
+  });
+
+  it('Apply ignores older status responses, then resumes authoritative synchronization', async () => {
+    for (const [id, btnId, fn, key, value] of [
+      ['step1SPInput', 'step1ApplyBtn', 'setStep1SP', 'step1sp', 125],
+      ['step2SPInput', 'step2ApplyBtn', 'setStep2SP', 'step2sp', 225],
+      ['rpmInput', 'rpmApplyBtn', 'setRPM', 'rpm', 16.5]
+    ]) {
+      let resolvePoll, holdPoll = false, status = { ...STATUS };
+      const env = setupEnv(url => {
+        if (url !== '/status') return Promise.resolve({ ok: true });
+        if (holdPoll) return new Promise(resolve => { resolvePoll = resolve; });
+        return Promise.resolve({ ok: true, json: async () => status });
+      });
+      await env.flush();
+      const input = env.els[id];
+      input.value = String(value);
+      env.ctx.markInputEdited(input);
+      holdPoll = true;
+      env.poll();
+      env.ctx[fn](env.els[btnId]);
+      await env.flush();
+      assert.equal(input.dataset.dirty, undefined);
+      resolvePoll({ ok: true, json: async () => STATUS });
+      await env.flush();
+      assert.equal(Number(input.value), value, `${id} overwritten by pre-save status`);
+      holdPoll = false;
+      status[key] = value;
+      env.poll();
+      await env.flush();
+      status[key] = value + 1;
+      env.poll();
+      await env.flush();
+      assert.equal(Number(input.value), value + 1, 'Unedited fields must follow device changes');
+    }
+  });
+
+  it('new edits during an Apply request are not cleared by its response', async () => {
+    let resolveSave;
+    const env = setupEnv(url => url === '/status'
+      ? Promise.resolve({ ok: true, json: async () => STATUS })
+      : new Promise(resolve => { resolveSave = resolve; }));
+    await env.flush();
+    const input = env.els.step1SPInput, btn = env.els.step1ApplyBtn;
+    input.value = '125';
+    env.ctx.markInputEdited(input);
+    env.ctx.setStep1SP(btn);
+    env.ctx.setStep1SP(btn);
+    assert.equal(env.calls.filter(call => call.url.startsWith('/step1setpoint')).length, 1);
+    input.value = '126';
+    env.ctx.markInputEdited(input);
+    resolveSave({ ok: true });
+    await env.flush();
+    env.poll();
+    await env.flush();
+    assert.equal(input.value, '126');
+    assert.equal(input.dataset.dirty, 'true');
+    assert.equal(btn.disabled, false);
+  });
+
+  it('numeric controls match firmware limits and reject non-finite or malformed drafts', async () => {
+    const firmware = fs.readFileSync(path.join(__dirname, 'filament_maker.ino'), 'utf8');
+    const constant = name => Number(firmware.match(new RegExp(`const float ${name} = ([\\d.]+);`))[1]);
+    const env = setupEnv();
+    await env.flush();
+    for (const [id, btnId, fn, min, max, endpoint] of [
+      ['step1SPInput', 'step1ApplyBtn', 'setStep1SP', constant('MIN_SETPOINT'), constant('MAX_SETPOINT'), '/step1setpoint'],
+      ['step2SPInput', 'step2ApplyBtn', 'setStep2SP', constant('MIN_SETPOINT'), constant('MAX_SETPOINT'), '/step2setpoint'],
+      ['rpmInput', 'rpmApplyBtn', 'setRPM', constant('MIN_RPM'), constant('MAX_RPM'), '/rpm']
+    ]) {
+      const input = env.els[id];
+      assert.equal(Number(input.min), min);
+      assert.equal(Number(input.max), max);
+      for (const invalid of ['', ' ', 'NaN', 'Infinity', '-Infinity', '125junk']) {
+        env.calls.length = 0;
+        input.value = invalid;
+        env.ctx[fn](env.els[btnId]);
+        assert.equal(env.calls.length, 0, `${id}: must reject ${JSON.stringify(invalid)}`);
+      }
+      for (const [value, expected] of [[-1, min], [max + 1, max]]) {
+        env.calls.length = 0;
+        input.value = String(value);
+        env.ctx[fn](env.els[btnId]);
+        assert.equal(env.calls[0].url, `${endpoint}?value=${expected}`);
+        await env.flush();
+      }
+    }
+  });
+
+  it('Stop All uses one POST and waits for firmware acknowledgement', async () => {
+    let resolveStop;
+    const env = setupEnv(url => url === '/status'
+      ? Promise.resolve({ ok: true, json: async () => STATUS })
+      : new Promise(resolve => { resolveStop = resolve; }));
     await env.flush();
     env.calls.length = 0;
     env.ctx.stopAll();
+    env.ctx.stopAll();
 
     assert.equal(env.els.estopBtn.innerText, 'STOPPING...');
-    assert.deepEqual(env.calls.map(c => c.url), [
-      '/step1?state=off', '/step2?state=off', '/step3?state=off', '/heater?state=off', '/stepper?state=off'
-    ]);
-
+    assert.equal(env.els.estopBtn.disabled, true);
+    assert.deepEqual(env.calls.map(c => c.url), ['/stopall']);
+    assert.equal(env.calls[0].opts.method, 'POST');
+    assert.match(env.els.stopStatusText.innerText, /Waiting/);
+    resolveStop({ ok: true });
     await env.flush();
-    const resetTimeout = [...env.timeouts.values()].find(t => t.ms === 800);
-    assert.ok(resetTimeout, 'Must schedule 800ms reset timer');
-    resetTimeout.fn();
+    assert.equal(env.els.estopBtn.disabled, false);
+    assert.match(env.els.stopStatusText.innerText, /acknowledged/);
     assert.equal(env.els.estopBtn.innerHTML, '&#9632; STOP ALL');
+  });
+
+  it('Stop All retains an unconfirmed warning on HTTP/network/timeout failures and can retry', async () => {
+    for (const failure of ['http', 'network', 'timeout']) {
+      let retry = false;
+      const env = setupEnv((url, opts) => {
+        if (url === '/status') return Promise.resolve({ ok: true, json: async () => STATUS });
+        if (retry) return Promise.resolve({ ok: true });
+        if (failure === 'http') return Promise.resolve({ ok: false });
+        if (failure === 'network') return Promise.reject(new Error('offline'));
+        return new Promise((_, reject) => opts.signal.addEventListener('abort', () => reject(new Error('timeout'))));
+      });
+      await env.flush();
+      env.ctx.stopAll();
+      if (failure === 'timeout') [...env.timeouts.values()].find(t => t.ms === 3000).fn();
+      await env.flush();
+      env.poll();
+      await env.flush();
+      assert.match(env.els.stopStatusText.innerText, /STOP UNCONFIRMED/, failure);
+      assert.equal(env.els.estopBtn.innerText, 'RETRY STOP ALL');
+      assert.equal(env.els.estopBtn.disabled, false);
+      retry = true;
+      env.ctx.stopAll();
+      await env.flush();
+      assert.match(env.els.stopStatusText.innerText, /acknowledged/);
+    }
   });
 });
