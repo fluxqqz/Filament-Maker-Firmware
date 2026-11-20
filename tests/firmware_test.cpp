@@ -26,6 +26,12 @@ void queueConnection(const char* ssid, const char* password) {
   processWifiSetup();
 }
 
+void assertLcdRow(int row, const char* text) {
+  std::string expected = text;
+  expected.resize(20, ' ');
+  assert(lcd.rows[row] == expected);
+}
+
 void testRuntimeAndStatus() {
   fakeMillis = 1000;
   startStep3();
@@ -36,24 +42,221 @@ void testRuntimeAndStatus() {
   assert(motorElapsedMs == 13345);
   fakeMillis += 10000;
   lcdShowStatus();
-  assert(lcd.rows[2].find("RPM:0.0 MOTOR:OFF") == 0);
-  assert(lcd.rows[3].find("RUNTIME 00:00:13") == 0);
+  assertLcdRow(1, "RPM:0.0");
+  assert(lcd.rows[2].find("RUNTIME 00:00:13") == 0);
+  assertLcdRow(3, "WiFi: Not connected");
   startStep3();
   assert(motorElapsedMs == 0);
   currentTemp = 215.3f; setpoint = 220; pwmOutput = 166; heaterEnabled = true;
   fakeMillis += 754000;
+  lcd.rows[1].assign(20, 'X');
+  lcd.rows[2].assign(20, 'X'); // Reordered rows must overwrite the previous layout.
   lcdShowStatus();
   assert(lcd.rows[0].find("TEMP:215.3/220.0C") == 0);
-  assert(lcd.rows[1].find("HEAT:ON  PWM:65%") == 0);
-  assert(lcd.rows[2].find("RPM:15.0 MOTOR:ON") == 0);
-  assert(lcd.rows[3].find("RUNTIME 00:12:34") == 0);
+  assertLcdRow(1, "RPM:15.0");
+  assert(lcd.rows[2].find("RUNTIME 00:12:34") == 0);
+  assertLcdRow(3, "WiFi: Not connected");
   stopAll();
   fakeMillis = 0xfffffff0u;
-  toggleMotor();
+  startStep3();
   fakeMillis = 0x20u;
-  toggleMotor();
+  stopStep3();
   assert(motorElapsedMs == 48); // millis() rollover.
   assert(toneValues[STEP_PIN] == 0);
+}
+
+void testMainScreenWifi() {
+  resetWifi();
+  stopAll();
+  std::snprintf(savedWifi.ssid, sizeof(savedWifi.ssid), "Network-A");
+  WiFi.targetSSID = "Network-B";
+  WiFi.connectedSSID = "cached-router";
+  lcdShowStatus();
+  assertLcdRow(3, "WiFi: Not connected"); // A saved/cached SSID does not prove connection.
+  WiFi.connection = WL_CONNECTED;
+  WiFi.connectedSSID = "Network-B";
+  lcdShowStatus();
+  assertLcdRow(3, "WiFi: Network-B");
+  for (const auto& row : lcd.rows) assert(row.find("HEAT:") == std::string::npos);
+
+  fakeMillis = 1000;
+  WiFi.connectedSSID = "abcdefghijklmnopqrstuvwxyz012345";
+  wifiNameScrollStart = 0; // Main-screen scrolling has its own timer.
+  int clears = lcd.clearCount;
+  lcdShowStatus();
+  assertLcdRow(3, "WiFi: abcdefghijklmn");
+  std::string readings[] = {lcd.rows[0], lcd.rows[1], lcd.rows[2]};
+  fakeMillis += 999;
+  lcdShowStatus();
+  assertLcdRow(3, "WiFi: abcdefghijklmn");
+  wifiNameScrollStart = fakeMillis;
+  fakeMillis += 501;
+  lcdShowStatus();
+  assertLcdRow(3, "WiFi: bcdefghijklmno");
+  for (int row = 0; row < 3; ++row) assert(lcd.rows[row] == readings[row]);
+  assert(lcd.clearCount == clears);
+
+  WiFi.connectedSSID = "ZYXWVUTSRQPONMLKJIHGFEDCBA987654";
+  lcdShowStatus();
+  assertLcdRow(3, "WiFi: ZYXWVUTSRQPONM"); // Start at the beginning when the network changes.
+  WiFi.connectedSSID = "C";
+  lcdShowStatus();
+  assertLcdRow(3, "WiFi: C"); // Clear the tail of the longer name.
+  WiFi.connectedSSID = "bad\nnet";
+  lcdShowStatus();
+  assertLcdRow(3, "WiFi: bad?net");
+  assert(WiFi.connectedSSID == "bad\nnet");
+  WiFi.connection = 0;
+  lcdShowStatus();
+  assertLcdRow(3, "WiFi: Not connected");
+
+  fakeMillis = 0xffffff00u;
+  WiFi.connection = WL_CONNECTED;
+  WiFi.connectedSSID = "1234567890abcdefghijklmnopqrstuv";
+  lcdShowStatus();
+  assertLcdRow(3, "WiFi: 1234567890abcd");
+  fakeMillis += 1500;
+  lcdShowStatus();
+  assertLcdRow(3, "WiFi: 234567890abcde"); // Scrolling survives millis() rollover.
+  assert(String(savedWifi.ssid) == "Network-A" && wifiPrefs.writes == 0);
+}
+
+void testControlMenuScrollingAndActions() {
+  resetWifi();
+  stopAll();
+  onButtonShort();
+  assert(uiMode == UI_MENU && MENU_COUNT == 7 && menuIndex == 0 && menuTop == 0);
+  const char* labels[] = {"Start S1 100C", "Start S2 200C", "Start STEPPER", "STOP ALL", "IP:192.168.1.1", "Wi-Fi Setup", "Start STEPPER 2"};
+  for (int i = 0; i < MENU_COUNT; ++i) assert(menuLabel(i) == labels[i]);
+  int clears = lcd.clearCount;
+  lcdRefresh(true);
+  assertLcdRow(0, ">Start S1 100C");
+  const int downTop[] = {0, 0, 0, 0, 1, 2, 3};
+  for (int i = 1; i < MENU_COUNT; ++i) {
+    onEncoderTurn(1);
+    lcdRefresh(true);
+    assert(menuIndex == i && menuTop == downTop[i]);
+    assert(lcd.rows[i - menuTop][0] == '>');
+  }
+  assertLcdRow(0, " STOP ALL");
+  assertLcdRow(3, ">Start STEPPER 2");
+  onEncoderTurn(1); lcdRefresh(true);
+  assert(menuIndex == 6 && menuTop == 3);
+  const int upTop[] = {0, 1, 2, 3, 3, 3, 3};
+  for (int i = 5; i >= 0; --i) {
+    onEncoderTurn(-1);
+    lcdRefresh(true);
+    assert(menuIndex == i && menuTop == upTop[i]);
+    assert(lcd.rows[i - menuTop][0] == '>');
+  }
+  onEncoderTurn(-1); lcdRefresh(true);
+  assert(menuIndex == 0 && menuTop == 0 && lcd.clearCount == clears);
+  onButtonShort();
+  assert(heaterEnabled && currentStep == 1 && menuLabel(0) == "Stop S1 100C");
+  onButtonShort();
+  assert(!heaterEnabled && currentStep == 0);
+  onEncoderTurn(1); onButtonShort();
+  assert(heaterEnabled && currentStep == 2 && menuLabel(1) == "Stop S2 200C");
+  onButtonShort();
+  assert(!heaterEnabled);
+  onEncoderTurn(1); onButtonShort();
+  assert(motorRunning && menuLabel(2) == "Stop STEPPER");
+  onButtonShort();
+  assert(!motorRunning);
+  onButtonShort(); startStep1();
+  onEncoderTurn(1); onButtonShort();
+  assert(uiMode == UI_STATUS && !heaterEnabled && !motorRunning);
+  assert(pwmValues[RPWM_PIN] == 0 && toneValues[STEP_PIN] == 0);
+  onButtonShort();
+  for (int i = 0; i < 4; ++i) onEncoderTurn(1);
+  onButtonShort();
+  assert(uiMode == UI_MENU && menuIndex == 4 && wifiRequest == WREQ_NONE);
+  onEncoderTurn(1); onButtonShort();
+  assert(uiMode == UI_WIFI_NETWORKS && wifiRequest == WREQ_SCAN);
+  onButtonLong(); processWifiSetup();
+}
+
+void testControlMenuTimeout() {
+  resetWifi();
+  fakeMillis = 1000;
+  startStep1(); startStep3();
+  onButtonShort();
+  fakeMillis += MENU_IDLE_TIMEOUT_MS - 1;
+  lcdRefresh(true);
+  assert(uiMode == UI_MENU);
+  onEncoderTurn(-1); // Even a turn at the top boundary resets inactivity.
+  fakeMillis += MENU_IDLE_TIMEOUT_MS - 1;
+  lcdRefresh(true);
+  assert(uiMode == UI_MENU);
+  for (int i = 0; i < 4; ++i) onEncoderTurn(1);
+  ++fakeMillis;
+  onButtonShort(); // The informational IP item also resets inactivity.
+  assert(lastMenuInteractionMs == fakeMillis);
+  fakeMillis += MENU_IDLE_TIMEOUT_MS - 1;
+  lcdRefresh(false);
+  assert(uiMode == UI_MENU);
+  ++fakeMillis;
+  lcdRefresh(false); // Must expire even inside the normal 250ms render throttle.
+  assert(uiMode == UI_STATUS && heaterEnabled && motorRunning);
+  assertLcdRow(1, "RPM:15.0");
+  stopAll();
+
+  fakeMillis = 0xfffffff0u;
+  onButtonShort();
+  fakeMillis += MENU_IDLE_TIMEOUT_MS - 1;
+  lcdRefresh(true);
+  assert(uiMode == UI_MENU);
+  ++fakeMillis; lcdRefresh(false);
+  assert(uiMode == UI_STATUS); // Inactivity arithmetic survives millis() rollover.
+
+  onEncoderTurn(1);
+  assert(uiMode == UI_MENU && menuIndex == 0 && menuTop == 0);
+  fakeMillis += MENU_IDLE_TIMEOUT_MS - 10;
+  inputValues[ENC_SW_PIN] = LOW;
+  pollButton();
+  fakeMillis += 20;
+  lcdRefresh(true);
+  assert(uiMode == UI_MENU); // A press near the deadline counts before debounce completes.
+  fakeMillis += 31; pollButton();
+  fakeMillis += 799; pollButton();
+  assert(uiMode == UI_MENU);
+  fakeMillis += 2; pollButton();
+  assert(uiMode == UI_STATUS); // Long press still exits after ~0.8s.
+  inputValues[ENC_SW_PIN] = HIGH;
+  pollButton(); fakeMillis += 51; pollButton();
+  assert(uiMode == UI_STATUS); // Releasing a long press must not reopen the menu.
+  inputValues.clear();
+
+  onButtonShort();
+  for (int i = 0; i < 5; ++i) onEncoderTurn(1);
+  lcdRefresh(true);
+  assert(menuIndex == 5 && menuTop == 2);
+  for (UiMode mode : {UI_WIFI_NETWORKS, UI_WIFI_PASSWORD, UI_WIFI_PROGRESS}) {
+    uiMode = mode;
+    wifiSetupState = WIFI_SETUP_CONNECTING;
+    wifiPasswordDraft = "unfinished-draft";
+    fakeMillis += MENU_IDLE_TIMEOUT_MS + 1;
+    lcdRefresh(true);
+    assert(uiMode == mode && wifiPasswordDraft == "unfinished-draft");
+  }
+  uiMode = UI_WIFI_PASSWORD;
+  wifiPasswordChoice = 2;
+  onButtonShort();
+  lcdRefresh(false);
+  assert(uiMode == UI_MENU && lastMenuInteractionMs == fakeMillis);
+  assert(menuIndex == 5 && menuTop == 2);
+  assertLcdRow(3, ">Wi-Fi Setup");
+  processWifiSetup();
+  fakeMillis += MENU_IDLE_TIMEOUT_MS - 1; lcdRefresh(true);
+  assert(uiMode == UI_MENU);
+  ++fakeMillis; lcdRefresh(false);
+  assert(uiMode == UI_STATUS);
+  uiMode = UI_WIFI_PROGRESS;
+  wifiSetupState = WIFI_SETUP_SUCCESS;
+  onButtonShort(); lcdRefresh(false);
+  assert(uiMode == UI_MENU && lastMenuInteractionMs == fakeMillis);
+  assertLcdRow(3, ">Wi-Fi Setup");
+  onButtonLong();
 }
 
 void testPasswordEditor() {
@@ -194,25 +397,55 @@ void testFaultPriorityAndStops() {
   processWifiSetup();
   assert(wifiPrefs.writes == 0);
   thermalFault = false;
-  startStep1(); startStep3();
+  startStep1(); startStep3(); startStepper2();
   analogValue = 3723;
   adcFiltered = 0;
   thermalCycles = 1;
   try { taskThermal(nullptr); } catch (EndTask&) {}
   assert(lockDepth == 0 && pwmOutput > 0);
   server.routes.at("/stopall")();
-  assert(!motorRunning && !heaterEnabled && pwmValues[RPWM_PIN] == 0 && toneValues[STEP_PIN] == 0);
+  assert(!motorRunning && !motor2Running && !heaterEnabled && pwmValues[RPWM_PIN] == 0 && toneValues[STEP_PIN] == 0 && toneValues[STEP2_PIN] == 0);
   thermalCycles = 1;
   try { taskThermal(nullptr); } catch (EndTask&) {}
   assert(lockDepth == 0 && pwmValues[RPWM_PIN] == 0 && pinValues[ENABLE_PIN] == LOW);
 }
 
+void testStepper2Controls() {
+  resetWifi();
+  stopAll();
+  assert(!motor2Running && toneValues[STEP2_PIN] == 0 && menuLabel(6) == "Start STEPPER 2");
+  server.arguments["state"] = "on";
+  server.routes.at("/stepper2")();
+  assert(motor2Running && toneValues[STEP2_PIN] == 800 && menuLabel(6) == "Stop STEPPER 2"); // 15 RPM * 3200 / 60
+  assert(!motorRunning); // stepper 1 untouched
+  server.arguments["value"] = "60";
+  server.routes.at("/rpm2")();
+  assert(rpm2 == 60.0f && toneValues[STEP2_PIN] == 3200);
+  server.arguments["value"] = "61";
+  server.routes.at("/rpm2")();
+  assert(rpm2 == 60.0f && server.responseCode == 400);
+  activateMenuItem(6);
+  assert(!motor2Running && toneValues[STEP2_PIN] == 0);
+  activateMenuItem(6);
+  assert(motor2Running);
+  server.routes.at("/stopall")();
+  assert(!motor2Running && toneValues[STEP2_PIN] == 0);
+  startStepper2();
+  LOCK_STATE(); tripThermalFaultLocked("TEST TRIP"); UNLOCK_STATE();
+  assert(thermalFault && !motor2Running && toneValues[STEP2_PIN] == 0);
+  thermalFault = false;
+}
+
 int main() {
   setup();
   testRuntimeAndStatus();
+  testMainScreenWifi();
+  testControlMenuScrollingAndActions();
+  testControlMenuTimeout();
   testPasswordEditor();
   testScanAndSelection();
   testConnectionPersistenceAndCancel();
   testFaultPriorityAndStops();
-  std::cout << "Firmware checks passed: runtime, LCD, password editor, scan, connect, persistence, cancel, faults, stops\n";
+  testStepper2Controls();
+  std::cout << "Firmware checks passed: runtime, LCD, live Wi-Fi/SSID scrolling, scrolling menu, inactivity, password editor, scan, connect, persistence, cancel, faults, stops, stepper 2\n";
 }

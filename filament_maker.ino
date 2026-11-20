@@ -40,13 +40,16 @@ const float MIN_RPM = 0.1;
 const float MAX_RPM = 60.0;
 
 // ================= BTS7960 =================
-const int ENABLE_PIN = 4;
-const int RPWM_PIN = 5;
-const int LPWM_PIN = 6;
+const int ENABLE_PIN = 7;
+const int RPWM_PIN = 6;
+const int LPWM_PIN = 5;
 
 // ================= STEPPER =================
-#define STEP_PIN 18
-#define DIR_PIN 17
+#define STEP_PIN 36
+#define DIR_PIN 35
+// ponytail: second stepper, fixed forward direction, no runtime timer.
+#define STEP2_PIN 47
+#define DIR2_PIN 21
 
 const int stepsPerRevolution = 3200;
 const float GEAR_RATIO = 25.0; // Stepper turns 25x per 1 wheel revolution
@@ -69,6 +72,8 @@ bool motorRunning = false;
 bool motorTimerRunning = false;
 uint32_t motorTimerTick = 0;
 uint64_t motorElapsedMs = 0;
+bool motor2Running = false;
+float rpm2 = 15.0; // Stepper 2 motor RPM, applied directly (no gear ratio)
 bool direction = HIGH;
 int currentStep = 0; // 0=idle, 1=Step 1, 2=Step 2, 3=Step 3
 float step1Setpoint = 100.0;
@@ -97,7 +102,7 @@ const char* ap_ssid = "Filament-Maker-AP";
 const char* ap_pass = WIFI_AP_PASSWORD;
 
 // LAN / Station Wi-Fi credentials
-const char* mdns_hostname = "filament-maker";
+const char* mdns_hostname = "filament-maker-new";
 
 struct WifiCredentials {
   char ssid[33] = {};
@@ -147,15 +152,15 @@ IPAddress AP_SUBNET(255,255,255,0);
 
 LiquidCrystal_I2C lcd(0x27, 20, 4);
 
-enum UiMode { UI_STATUS, UI_MENU, UI_EDIT, UI_WIFI_NETWORKS, UI_WIFI_PASSWORD, UI_WIFI_PROGRESS };
-enum EditTarget { EDIT_NONE, EDIT_S1SP, EDIT_S2SP, EDIT_RPM };
+enum UiMode { UI_STATUS, UI_MENU, UI_WIFI_NETWORKS, UI_WIFI_PASSWORD, UI_WIFI_PROGRESS };
 
 UiMode uiMode = UI_STATUS;
-EditTarget editTarget = EDIT_NONE;
-float editValue = 0;
 
-const int MENU_COUNT = 11;
+const int MENU_COUNT = 7;
 int menuIndex = 0;
+int menuTop = 0;
+uint32_t lastMenuInteractionMs = 0;
+const uint32_t MENU_IDLE_TIMEOUT_MS = 15000;
 
 int wifiNetworkIndex = 0;
 String wifiSelectedSSID;
@@ -174,6 +179,16 @@ std::atomic<bool> lcdNeedsRefresh{false};
 
 void lcdForce() {
   lcdNeedsRefresh = true;
+}
+
+void openControlMenu(bool resetSelection) {
+  if (resetSelection) {
+    menuIndex = 0;
+    menuTop = 0;
+  }
+  lastMenuInteractionMs = millis();
+  uiMode = UI_MENU;
+  lcdForce();
 }
 
 // Encoder ISR state
@@ -258,6 +273,16 @@ void updateStepperOutput() {
   UNLOCK_STATE();
 }
 
+// Caller holds stateMutex. Stepper 2 has no runtime timer; RPM is applied directly.
+void updateStepper2OutputLocked() {
+  if (motor2Running) {
+    float stepFreq = (rpm2 / 60.0) * stepsPerRevolution;
+    ledcWriteTone(STEP2_PIN, (uint32_t)stepFreq);
+  } else {
+    ledcWriteTone(STEP2_PIN, 0);
+  }
+}
+
 bool parseNumber(const String& text, float minimum, float maximum, float& value) {
   String trimmed = text;
   trimmed.trim();
@@ -298,6 +323,8 @@ void tripThermalFaultLocked(const String& reason) {
   faultReason = reason;
   setHeaterEnabledLocked(false);
   currentStep = 0;
+  motor2Running = false;
+  updateStepper2OutputLocked();
   lcdForce();
 }
 
@@ -384,29 +411,32 @@ void stopStep3() {
   lcdForce();
 }
 
+void startStepper2() {
+  LOCK_STATE();
+  motor2Running = true;
+  updateStepper2OutputLocked();
+  UNLOCK_STATE();
+
+  lcdForce();
+}
+
+void stopStepper2() {
+  LOCK_STATE();
+  motor2Running = false;
+  updateStepper2OutputLocked();
+  UNLOCK_STATE();
+
+  lcdForce();
+}
+
 void stopAll() {
   LOCK_STATE();
   currentStep = 0;
   setHeaterEnabledLocked(false);
   motorRunning = false;
   updateStepperOutputLocked();
-  UNLOCK_STATE();
-
-  lcdForce();
-}
-
-void toggleHeater() {
-  LOCK_STATE();
-  setHeaterEnabledLocked(!heaterEnabled);
-  UNLOCK_STATE();
-
-  lcdForce();
-}
-
-void toggleMotor() {
-  LOCK_STATE();
-  motorRunning = !motorRunning;
-  updateStepperOutputLocked();
+  motor2Running = false;
+  updateStepper2OutputLocked();
   UNLOCK_STATE();
 
   lcdForce();
@@ -609,14 +639,14 @@ void lcdLine(int row, String s) {
   lcd.print(s);
 }
 
-String lcdNetworkName(String name, unsigned int width, bool scroll = true) {
+String lcdNetworkName(String name, unsigned int width, bool scroll = true, uint32_t scrollStart = wifiNameScrollStart) {
   // SSIDs are byte strings; HD44780 cannot render UTF-8 or control characters.
   for (unsigned int i = 0; i < name.length(); i++) {
     if ((unsigned char)name[i] < 32 || (unsigned char)name[i] > 126) name[i] = '?';
   }
   if (name.length() <= width) return name;
   if (!scroll) return name.substring(0, width);
-  uint32_t elapsed = (uint32_t)(millis() - wifiNameScrollStart);
+  uint32_t elapsed = (uint32_t)(millis() - scrollStart);
   unsigned int offset = elapsed < 1000 ? 0 : ((elapsed - 1000) / 500) % (name.length() + 3);
   String scrolling = name + "   " + name;
   return scrolling.substring(offset, offset + width);
@@ -728,7 +758,7 @@ void selectWifiPasswordCharacter() {
     if (wifiPasswordDraft.length()) wifiPasswordDraft.remove(wifiPasswordDraft.length() - 1);
   } else if (wifiPasswordChoice == 2) {
     cancelWifiSetup();
-    uiMode = UI_MENU;
+    openControlMenu(false);
   } else if (wifiPasswordDraft.length() < 64) {
     wifiPasswordDraft += WIFI_PASSWORD_CHARS[wifiPasswordChoice - 3];
   } else {
@@ -743,22 +773,17 @@ String menuLabel(int idx) {
   float s1sp = step1Setpoint;
   float s2sp = step2Setpoint;
   bool mot = motorRunning;
-  float r = rpm;
-  bool heat = heaterEnabled;
+  bool mot2 = motor2Running;
   UNLOCK_STATE();
 
   switch (idx) {
     case 0: return String(step == 1 ? "Stop S1 " : "Start S1 ") + String(s1sp, 0) + "C";
     case 1: return String(step == 2 ? "Stop S2 " : "Start S2 ") + String(s2sp, 0) + "C";
     case 2: return String(mot ? "Stop STEPPER" : "Start STEPPER");
-    case 3: return "Set S1SP:" + String(s1sp, 0) + "C";
-    case 4: return "Set S2SP:" + String(s2sp, 0) + "C";
-    case 5: return "Set RPM:" + String(r, 1);
-    case 6: return String("Heater:") + String(heat ? "ON" : "OFF");
-    case 7: return String("Motor:") + String(mot ? "ON" : "OFF");
-    case 8: return "STOP ALL";
-    case 9: return "IP:" + (WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "192.168.1.1");
-    case 10: return "Wi-Fi Setup";
+    case 3: return "STOP ALL";
+    case 4: return "IP:" + (WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "192.168.1.1");
+    case 5: return "Wi-Fi Setup";
+    case 6: return String(mot2 ? "Stop STEPPER 2" : "Start STEPPER 2");
     default: return "";
   }
 }
@@ -769,9 +794,7 @@ void lcdShowStatus() {
   String reason = faultReason;
   float temp = currentTemp;
   float sp = setpoint;
-  bool heat = heaterEnabled;
   bool mot = motorRunning;
-  int pwm = pwmOutput;
   float r = rpm;
   updateMotorRuntimeLocked(millis());
   uint64_t elapsedSeconds = motorElapsedMs / 1000;
@@ -785,20 +808,30 @@ void lcdShowStatus() {
     return;
   }
 
+  static String displayedWifiSSID;
+  static uint32_t wifiStatusScrollStart = 0;
+  String connectedSSID = WiFi.status() == WL_CONNECTED ? WiFi.SSID() : "";
+  if (connectedSSID != displayedWifiSSID) {
+    displayedWifiSSID = connectedSSID;
+    wifiStatusScrollStart = millis();
+  }
+
   char runtime[21];
   snprintf(runtime, sizeof(runtime), "RUNTIME %02llu:%02u:%02u",
     (unsigned long long)(elapsedSeconds / 3600), (unsigned int)(elapsedSeconds / 60 % 60),
     (unsigned int)(elapsedSeconds % 60));
   lcdLine(0, "TEMP:" + String(temp, 1) + "/" + String(sp, 1) + "C");
-  lcdLine(1, "HEAT:" + String(heat ? "ON" : "OFF") + "  PWM:" + String((pwm * 100 + 127) / 255) + "%");
-  lcdLine(2, "RPM:" + String(mot ? r : 0.0f, 1) + " MOTOR:" + String(mot ? "ON" : "OFF"));
-  lcdLine(3, runtime);
+  lcdLine(1, "RPM:" + String(mot ? r : 0.0f, 1));
+  lcdLine(2, runtime);
+  lcdLine(3, "WiFi: " + (connectedSSID.length() ?
+    lcdNetworkName(connectedSSID, 14, true, wifiStatusScrollStart) : String("Not connected")));
 }
 
 void lcdShowMenu() {
-  int top = (menuIndex / 4) * 4;
+  if (menuIndex < menuTop) menuTop = menuIndex;
+  else if (menuIndex >= menuTop + 4) menuTop = menuIndex - 3;
   for (int r = 0; r < 4; r++) {
-    int idx = top + r;
+    int idx = menuTop + r;
     if (idx >= MENU_COUNT) {
       lcdLine(r, "");
     } else {
@@ -808,22 +841,12 @@ void lcdShowMenu() {
   }
 }
 
-void lcdShowEdit() {
-  String title = "";
-  String unit = "";
-  int decimals = 0;
-  if (editTarget == EDIT_S1SP) { title = "Edit Step1 SP"; unit = "C"; decimals = 0; }
-  else if (editTarget == EDIT_S2SP) { title = "Edit Step2 SP"; unit = "C"; decimals = 0; }
-  else if (editTarget == EDIT_RPM) { title = "Edit Wheel RPM"; unit = ""; decimals = 1; }
-
-  lcdLine(0, title);
-  lcdLine(1, String(editValue, decimals) + unit);
-  lcdLine(2, "rot=chg click=save");
-  lcdLine(3, "hold=back no-save");
-}
-
 void lcdRefresh(bool force) {
   unsigned long now = millis();
+  if (uiMode == UI_MENU && (uint32_t)(now - lastMenuInteractionMs) >= MENU_IDLE_TIMEOUT_MS) {
+    uiMode = UI_STATUS;
+    force = true;
+  }
   bool requested = lcdNeedsRefresh.exchange(false);
   if (!force && !requested && (now - lastLcdUpdate < LCD_INTERVAL_MS)) return;
   lastLcdUpdate = now;
@@ -832,12 +855,10 @@ void lcdRefresh(bool force) {
   if (fault && uiMode != UI_STATUS) {
     if (uiMode == UI_WIFI_NETWORKS || uiMode == UI_WIFI_PASSWORD || uiMode == UI_WIFI_PROGRESS) cancelWifiSetup();
     uiMode = UI_STATUS;
-    editTarget = EDIT_NONE;
   }
 
   if (uiMode == UI_STATUS) lcdShowStatus();
   else if (uiMode == UI_MENU) lcdShowMenu();
-  else if (uiMode == UI_EDIT) lcdShowEdit();
   else if (uiMode == UI_WIFI_NETWORKS) lcdShowWifiNetworks();
   else if (uiMode == UI_WIFI_PASSWORD) lcdShowWifiPassword();
   else if (uiMode == UI_WIFI_PROGRESS) lcdShowWifiProgress();
@@ -846,48 +867,6 @@ void lcdRefresh(bool force) {
 // =====================================================
 // ENCODER & BUTTON LOGIC
 // =====================================================
-void enterEdit(int t) {
-  editTarget = (EditTarget)t;
-  LOCK_STATE();
-  if (t == EDIT_S1SP) editValue = step1Setpoint;
-  else if (t == EDIT_S2SP) editValue = step2Setpoint;
-  else if (t == EDIT_RPM) editValue = rpm;
-  UNLOCK_STATE();
-
-  uiMode = UI_EDIT;
-  lcd.clear();
-  lcdForce();
-}
-
-void saveEditAndToMenu() {
-  if (editTarget == EDIT_S1SP) {
-    LOCK_STATE();
-    step1Setpoint = editValue;
-    if (currentStep == 1) { setpoint = step1Setpoint; }
-    pidResetRequested = true;
-    UNLOCK_STATE();
-    prefs.putFloat("step1sp", editValue);
-  } else if (editTarget == EDIT_S2SP) {
-    LOCK_STATE();
-    step2Setpoint = editValue;
-    if (currentStep == 2) { setpoint = step2Setpoint; }
-    pidResetRequested = true;
-    UNLOCK_STATE();
-    prefs.putFloat("step2sp", editValue);
-  } else if (editTarget == EDIT_RPM) {
-    float v = constrain(editValue, MIN_RPM, MAX_RPM);
-    LOCK_STATE();
-    rpm = v;
-    updateStepperOutputLocked();
-    UNLOCK_STATE();
-    prefs.putFloat("rpm", v);
-  }
-  editTarget = EDIT_NONE;
-  uiMode = UI_MENU;
-  lcd.clear();
-  lcdForce();
-}
-
 void onEncoderTurn(int dir) {
   LOCK_STATE();
   bool verb = verbose;
@@ -900,22 +879,12 @@ void onEncoderTurn(int dir) {
   }
 
   if (uiMode == UI_STATUS) {
-    uiMode = UI_MENU;
-    lcd.clear();
+    openControlMenu(true);
+    return;
   }
   if (uiMode == UI_MENU) {
-    menuIndex += dir;
-    if (menuIndex < 0) menuIndex = MENU_COUNT - 1;
-    if (menuIndex >= MENU_COUNT) menuIndex = 0;
-    lcdForce();
-  } else if (uiMode == UI_EDIT) {
-    if (editTarget == EDIT_S1SP || editTarget == EDIT_S2SP) {
-      editValue += dir * 1.0;
-      editValue = constrain(editValue, MIN_SETPOINT, MAX_SETPOINT);
-    } else if (editTarget == EDIT_RPM) {
-      editValue += dir * 0.5;
-      editValue = constrain(editValue, MIN_RPM, MAX_RPM);
-    }
+    menuIndex = constrain(menuIndex + dir, 0, MENU_COUNT - 1);
+    lastMenuInteractionMs = millis();
     lcdForce();
   } else if (uiMode == UI_WIFI_NETWORKS) {
     LOCK_STATE();
@@ -951,21 +920,21 @@ void activateMenuItem(int idx) {
       if (mot) stopStep3(); else startStep3();
       break;
     }
-    case 3: enterEdit(EDIT_S1SP); return;
-    case 4: enterEdit(EDIT_S2SP); return;
-    case 5: enterEdit(EDIT_RPM); return;
-    case 6: toggleHeater(); break;
-    case 7: toggleMotor(); break;
-    case 8:
+    case 3:
       stopAll();
       uiMode = UI_STATUS;
       lcd.clear();
       lcdForce();
       return;
-    case 9:
+    case 4:
       // Informational IP item
       break;
-    case 10: requestWifiScan(); return;
+    case 5: requestWifiScan(); return;
+    case 6: {
+      LOCK_STATE(); bool mot2 = motor2Running; UNLOCK_STATE();
+      if (mot2) stopStepper2(); else startStepper2();
+      break;
+    }
   }
   lcdForce();
 }
@@ -979,14 +948,10 @@ void onButtonShort() {
   if (verb) Serial.println("BTN short press");
 
   if (uiMode == UI_STATUS) {
-    uiMode = UI_MENU;
-    menuIndex = 0;
-    lcd.clear();
-    lcdForce();
+    openControlMenu(true);
   } else if (uiMode == UI_MENU) {
+    lastMenuInteractionMs = millis();
     activateMenuItem(menuIndex);
-  } else if (uiMode == UI_EDIT) {
-    saveEditAndToMenu();
   } else if (uiMode == UI_WIFI_NETWORKS) {
     selectWifiNetwork();
   } else if (uiMode == UI_WIFI_PASSWORD) {
@@ -995,7 +960,7 @@ void onButtonShort() {
     LOCK_STATE(); WifiSetupState state = wifiSetupState; UNLOCK_STATE();
     if (state == WIFI_SETUP_SUCCESS) {
       cancelWifiSetup();
-      uiMode = UI_MENU;
+      openControlMenu(false);
     } else if (state == WIFI_SETUP_FAILED) {
       if (wifiSelectedSecure) uiMode = UI_WIFI_PASSWORD;
       else requestWifiConnect();
@@ -1016,7 +981,6 @@ void onButtonLong() {
   }
   if (uiMode == UI_WIFI_NETWORKS || uiMode == UI_WIFI_PASSWORD || uiMode == UI_WIFI_PROGRESS) cancelWifiSetup();
   uiMode = UI_STATUS;
-  editTarget = EDIT_NONE;
   lcd.clear();
   lcdForce();
 }
@@ -1038,6 +1002,7 @@ void pollButton() {
   int r = digitalRead(ENC_SW_PIN);
   if (r != lastSwReading) {
     lastBtnDebounce = millis();
+    if (r == LOW && uiMode == UI_MENU) lastMenuInteractionMs = millis();
   }
   lastSwReading = r;
 
@@ -1075,6 +1040,8 @@ String buildStatus() {
   float s2sp = step2Setpoint;
   bool fault = thermalFault;
   String fMsg = faultReason;
+  bool mot2 = motor2Running;
+  float r2 = rpm2;
   UNLOCK_STATE();
 
   String json = "{";
@@ -1084,6 +1051,8 @@ String buildStatus() {
   json += "\"pwm\":" + String(pwm) + ",";
   json += "\"heater\":" + String(heat ? "true" : "false") + ",";
   json += "\"stepper\":" + String(mot ? "true" : "false") + ",";
+  json += "\"stepper2\":" + String(mot2 ? "true" : "false") + ",";
+  json += "\"rpm2\":" + String(r2, 1) + ",";
   json += "\"step\":" + String(st) + ",";
   json += "\"step1sp\":" + String(s1sp, 1) + ",";
   json += "\"step2sp\":" + String(s2sp, 1) + ",";
@@ -1431,6 +1400,7 @@ void setup() {
   prefs.begin("settings", false);
   setpoint = boundedSetting(prefs.getFloat("setpoint", 210.0), MIN_SETPOINT, MAX_SETPOINT, 210.0);
   rpm = boundedSetting(prefs.getFloat("rpm", 15.0), MIN_RPM, MAX_RPM, 15.0);
+  rpm2 = boundedSetting(prefs.getFloat("rpm2", 15.0), MIN_RPM, MAX_RPM, 15.0);
   step1Setpoint = boundedSetting(prefs.getFloat("step1sp", 100.0), MIN_SETPOINT, MAX_SETPOINT, 100.0);
   step2Setpoint = boundedSetting(prefs.getFloat("step2sp", 200.0), MIN_SETPOINT, MAX_SETPOINT, 200.0);
   verbose = prefs.getBool("verbose", false);
@@ -1451,6 +1421,15 @@ void setup() {
   digitalWrite(DIR_PIN, direction);
   ledcAttach(STEP_PIN, 800, 8);
   updateStepperOutput();
+  pinMode(DIR2_PIN, OUTPUT);
+  digitalWrite(DIR2_PIN, HIGH);
+  // Core 3.3 reuses a timer whose freq+resolution match, and ledcWriteTone retunes the
+  // whole timer. 10-bit (unlike STEP's 8-bit) forces STEP2 onto its own timer so the two
+  // speeds stay independent. ledcWriteTone switches to 10-bit anyway.
+  if (!ledcAttach(STEP2_PIN, 800, 10)) Serial.println("STEP2 LEDC attach failed");
+  LOCK_STATE();
+  updateStepper2OutputLocked();
+  UNLOCK_STATE();
 
   // LCD + Encoder
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
@@ -1580,6 +1559,24 @@ void setup() {
     updateStepperOutputLocked();
     UNLOCK_STATE();
     prefs.putFloat("rpm", val);
+    lcdForce();
+    server.send(200, "text/plain", "OK");
+  });
+  server.on("/stepper2", []() {
+    if (server.arg("state") == "on") startStepper2(); else stopStepper2();
+    server.send(200, "text/plain", "OK");
+  });
+  server.on("/rpm2", []() {
+    float val;
+    if (!parseNumber(server.arg("value"), MIN_RPM, MAX_RPM, val)) {
+      server.send(400, "text/plain", "Invalid RPM: expected 0.1-60");
+      return;
+    }
+    LOCK_STATE();
+    rpm2 = val;
+    updateStepper2OutputLocked();
+    UNLOCK_STATE();
+    prefs.putFloat("rpm2", val);
     lcdForce();
     server.send(200, "text/plain", "OK");
   });

@@ -31,7 +31,7 @@ function createDOM() {
 }
 
 const STATUS = {
-  temp: 215.3, setpoint: 210.0, rpm: 15.0, pwm: 128, heater: true, stepper: true, step: 1,
+  temp: 215.3, setpoint: 210.0, rpm: 15.0, pwm: 128, heater: true, stepper: true, stepper2: false, rpm2: 15.0, step: 1,
   step1sp: 100.0, step2sp: 200.0, stable: true, fault: false, faultMsg: '', ip: '192.168.1.100', hostname: 'filament-maker-test.local'
 };
 
@@ -67,7 +67,7 @@ describe('Dashboard Web UI & Polling Regression Suite', () => {
     for (const k of ['systemBadge', 'sysBadgeDot']) assert.match(els[k].className, /\bpending\b/);
     assert.doesNotMatch(html, /<aside\b|\bid=["']sidebar["']|\bclass=["'][^"']*\bsidebar\b|<nav\b|<details\b|<summary\b|connStatusText|connDot/i);
     assert.match(html, /<p class="network-details" id="ipDisplay">/);
-    for (const id of ['step1SPInput', 'step2SPInput', 'rpmInput']) {
+    for (const id of ['step1SPInput', 'step2SPInput', 'rpmInput', 'rpm2Input']) {
       assert.match(html, new RegExp(`id="${id}" oninput="markInputEdited\\(this\\)"`));
     }
   });
@@ -101,6 +101,7 @@ describe('Dashboard Web UI & Polling Regression Suite', () => {
     for (const [fn, url] of [
       [() => env.ctx.heaterOn(), '/heater?state=on'], [() => env.ctx.heaterOff(), '/heater?state=off'],
       [() => env.ctx.stepperOn(), '/stepper?state=on'], [() => env.ctx.stepperOff(), '/stepper?state=off'],
+      [() => env.ctx.stepper2On(), '/stepper2?state=on'], [() => env.ctx.stepper2Off(), '/stepper2?state=off'],
       [() => env.ctx.toggleStep1(), '/step1?state=off'], [() => env.ctx.toggleStep2(), '/step2?state=on'],
       [() => env.ctx.toggleStep3(), '/step3?state=off']
     ]) testCall(fn, url);
@@ -310,7 +311,8 @@ describe('Dashboard Web UI & Polling Regression Suite', () => {
     for (const [id, btnId, fn, min, max, endpoint] of [
       ['step1SPInput', 'step1ApplyBtn', 'setStep1SP', constant('MIN_SETPOINT'), constant('MAX_SETPOINT'), '/step1setpoint'],
       ['step2SPInput', 'step2ApplyBtn', 'setStep2SP', constant('MIN_SETPOINT'), constant('MAX_SETPOINT'), '/step2setpoint'],
-      ['rpmInput', 'rpmApplyBtn', 'setRPM', constant('MIN_RPM'), constant('MAX_RPM'), '/rpm']
+      ['rpmInput', 'rpmApplyBtn', 'setRPM', constant('MIN_RPM'), constant('MAX_RPM'), '/rpm'],
+      ['rpm2Input', 'rpm2ApplyBtn', 'setRPM2', constant('MIN_RPM'), constant('MAX_RPM'), '/rpm2']
     ]) {
       const input = env.els[id];
       assert.equal(Number(input.min), min);

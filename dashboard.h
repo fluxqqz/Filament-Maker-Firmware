@@ -783,6 +783,15 @@ button:focus-visible, input:focus-visible {
         <span class="tile-value" id="stepperTileVal">OFF</span>
         <span class="tile-desc">Output wheel drive</span>
       </div>
+
+      <div class="status-tile off" id="stepper2Tile">
+        <div class="tile-head">
+          <span class="tile-dot"></span>
+          <span class="tile-title">STEPPER 2</span>
+        </div>
+        <span class="tile-value" id="stepper2TileVal">OFF</span>
+        <span class="tile-desc">Independent motor</span>
+      </div>
     </div>
   </section>
 
@@ -880,6 +889,28 @@ button:focus-visible, input:focus-visible {
           <button class="btn-ctrl active-off" id="btnStepperOff" onclick="stepperOff()">Stepper OFF</button>
         </div>
       </div>
+
+      <div class="ctrl-row">
+        <div class="ctrl-info">
+          <span class="ctrl-title">Stepper 2</span>
+          <span class="ctrl-helper">Independent motor, on/off</span>
+        </div>
+        <div class="btn-group">
+          <button class="btn-ctrl" id="btnStepper2On" onclick="stepper2On()">Stepper 2 ON</button>
+          <button class="btn-ctrl active-off" id="btnStepper2Off" onclick="stepper2Off()">Stepper 2 OFF</button>
+        </div>
+      </div>
+
+      <div class="ctrl-row">
+        <div class="ctrl-info">
+          <span class="ctrl-title">Stepper 2 speed</span>
+          <span class="ctrl-helper">Motor RPM (0.1&ndash;60)</span>
+        </div>
+        <div class="input-row">
+          <input type="number" min="0.1" max="60" step="0.1" class="text-input" id="rpm2Input" oninput="markInputEdited(this)">
+          <button class="btn-apply" id="rpm2ApplyBtn" onclick="setRPM2(this)">Apply</button>
+        </div>
+      </div>
     </div>
 
     <div class="panel">
@@ -942,6 +973,8 @@ function heaterOn() { fetch('/heater?state=on'); }
 function heaterOff() { fetch('/heater?state=off'); }
 function stepperOn() { fetch('/stepper?state=on'); }
 function stepperOff() { fetch('/stepper?state=off'); }
+function stepper2On() { fetch('/stepper2?state=on'); }
+function stepper2Off() { fetch('/stepper2?state=off'); }
 
 function stopAll() {
   const btn = document.getElementById('estopBtn');
@@ -1038,6 +1071,7 @@ function applyInput(inputId, endpoint, btn) {
 function setStep1SP(btn) { applyInput('step1SPInput', '/step1setpoint', btn); }
 function setStep2SP(btn) { applyInput('step2SPInput', '/step2setpoint', btn); }
 function setRPM(btn) { applyInput('rpmInput', '/rpm', btn); }
+function setRPM2(btn) { applyInput('rpm2Input', '/rpm2', btn); }
 
 function resetFault() {
   fetch('/resetfault');
@@ -1095,6 +1129,7 @@ function pollStatus() {
       syncInput(document.getElementById("step1SPInput"), data.step1sp, pollVersion);
       syncInput(document.getElementById("step2SPInput"), data.step2sp, pollVersion);
       syncInput(document.getElementById("rpmInput"), data.rpm, pollVersion);
+      if (typeof data.rpm2 === 'number') syncInput(document.getElementById("rpm2Input"), data.rpm2, pollVersion);
 
       // Network info
       if (data.ip) {
@@ -1153,6 +1188,24 @@ function pollStatus() {
         sVal.innerText = "OFF";
         btnSOn.className = "btn-ctrl";
         btnSOff.className = "btn-ctrl active-off";
+      }
+
+      if (typeof data.stepper2 === 'boolean') {
+        let s2Tile = document.getElementById("stepper2Tile");
+        let s2Val = document.getElementById("stepper2TileVal");
+        let btnS2On = document.getElementById("btnStepper2On");
+        let btnS2Off = document.getElementById("btnStepper2Off");
+        if (data.stepper2) {
+          s2Tile.className = "status-tile";
+          s2Val.innerText = "RUNNING";
+          btnS2On.className = "btn-ctrl active-on";
+          btnS2Off.className = "btn-ctrl";
+        } else {
+          s2Tile.className = "status-tile off";
+          s2Val.innerText = "OFF";
+          btnS2On.className = "btn-ctrl";
+          btnS2Off.className = "btn-ctrl active-off";
+        }
       }
 
       // Active Stage Badge (including Manual Override detection)

@@ -75,7 +75,8 @@ void attachInterrupt(int, void (*)(), int) {}
 int digitalPinToInterrupt(int pin) { return pin; }
 int analogValue = 3723;
 int analogRead(int) { return analogValue; }
-int digitalRead(int) { return HIGH; }
+std::map<int, int> inputValues;
+int digitalRead(int pin) { return inputValues.count(pin) ? inputValues[pin] : HIGH; }
 int pinValues[50] = {};
 uint32_t pwmValues[50] = {};
 uint32_t toneValues[50] = {};
@@ -191,10 +192,11 @@ void esp_wifi_scan_stop() { WiFi.scanState = WIFI_SCAN_FAILED; }
 struct LiquidCrystal_I2C {
   std::string rows[4];
   int row = 0, column = 0;
+  int clearCount = 0;
   LiquidCrystal_I2C(int, int, int) { clear(); }
   void init() {}
   void backlight() {}
-  void clear() { for (auto& text : rows) text.assign(20, ' '); }
+  void clear() { ++clearCount; for (auto& text : rows) text.assign(20, ' '); }
   void setCursor(int col, int r) { assert(r >= 0 && r < 4); row = r; column = col; }
   void print(const String& value) {
     assert(lockDepth == 0);

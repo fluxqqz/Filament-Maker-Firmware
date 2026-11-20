@@ -36,6 +36,7 @@ before uploading.
 | Thermistor ADC | 15; 100 kΩ NTC, beta 3950, 10 kΩ series resistor |
 | BTS7960 heater | enable 4, RPWM 5, LPWM 6 |
 | Stepper driver | STEP 18, DIR 17; 3200 pulses/motor revolution |
+| Stepper 2 driver | STEP 16, DIR 21 (fixed forward); 3200 pulses/motor revolution; RPM is motor RPM, no gear ratio |
 | Output-wheel reduction | 25 motor turns per wheel turn |
 | LCD | SDA 8, SCL 9; I²C address `0x27`, 20×4 |
 | Rotary encoder | CLK 12, DT 13, switch 11 |
@@ -47,12 +48,11 @@ match them to the installed hardware and calibrate temperature/speed on-device.
 
 - Open `http://filament-maker.local` on the LAN, or join `Filament-Maker-AP`
   and open `http://192.168.1.1`.
-- Setpoints use **0–260°C** and output-wheel speed uses **0.1–60 RPM** across
-  the web, encoder and serial interfaces. Invalid web/serial numeric commands
+- Setpoints use **0–260°C** and output-wheel speed uses **0.1–60 RPM** through
+  the web and serial interfaces. Invalid web/serial numeric commands
   are rejected; invalid saved settings fall back to defaults at startup.
 - Stages 1 and 2 select heating targets. Stage 3 controls the motor independently;
   stages do not advance automatically.
-- LCD edits are drafts: click to save/apply, hold to discard and return to status.
 - Web **Stop All** sends one `POST /stopall`, which disables both outputs under
   the state mutex before acknowledging. Failed/timed-out requests remain marked
   **STOP UNCONFIRMED** and can be retried.
@@ -64,19 +64,45 @@ match them to the installed hardware and calibrate temperature/speed on-device.
 
 ### LCD status and runtime
 
-The 20×4 main screen shows current/target temperature, heater enabled state and
-PWM percentage, commanded wheel RPM and motor state, and the current run timer:
+The 20×4 main screen shows current/target temperature, commanded wheel RPM
+(zero when stopped), the current run timer, and the connected Wi-Fi network:
 
 ```text
 TEMP:215.3/220.0C
-HEAT:ON  PWM:65%
-RPM:15.0 MOTOR:ON
+RPM:15.0
 RUNTIME 00:12:34
+WiFi: Network-B
 ```
 
 Runtime begins when the motor starts, freezes when it stops, and resets on the
 next start or reboot. Repeated ON commands and RPM changes do not reset it.
 Click the encoder to open the menu; thermal faults override every LCD screen.
+The bottom row reports the currently connected router's SSID, rather than the
+saved credentials. It shows `WiFi: Not connected` while disconnected. Names
+longer than 14 characters scroll within that row, with a fresh pause when the
+network changes; the temperature, RPM and runtime rows stay in place.
+
+### Control menu
+
+The six menu items are:
+
+1. Start/Stop Stage 1, with its configured temperature
+2. Start/Stop Stage 2, with its configured temperature
+3. Start/Stop Stepper
+4. STOP ALL
+5. IP Address
+6. Wi-Fi Setup
+
+Rotate to move the `>` cursor and click to activate the selected item. The four
+visible rows scroll one line at a time as the cursor reaches the screen edge,
+without wrapping at the first/last item or clearing the display during movement.
+Adjust temperature targets and RPM through the web dashboard or serial commands.
+
+After **15 seconds without input**, the Control Menu returns to Main Status.
+Rotating, pressing or clicking the encoder restarts the timer. Holding the button
+for about **0.8 seconds** returns to Main Status immediately. Wi-Fi network,
+password and connection screens are exempt from the menu inactivity timeout;
+returning from Wi-Fi setup starts a fresh 15-second menu timer.
 
 ### Wi-Fi setup with the encoder
 
@@ -146,8 +172,10 @@ cl /nologo /std:c++17 /EHsc tests\firmware_test.cpp /Fe:"%TEMP%\filament-firmwar
 "%TEMP%\filament-firmware-test.exe"
 ```
 
-It checks runtime start/stop/rollover, LCD output, password editing, scan results,
-connection timeout/cancel/retry, credential saving/reload and fault priority.
+It checks runtime start/stop/rollover, LCD output and live-SSID scrolling, all six
+menu actions, one-line scrolling and boundaries, menu inactivity/interaction/rollover, Wi-Fi timeout
+exemption and return navigation, password editing, scan results, connection
+timeout/cancel/retry, credential saving/reload and fault priority.
 The Arduino build checks real-library compatibility. Physical encoder feel,
 Wi-Fi association, PWM timing, sensor calibration and shutdown behavior still
 require a bench check on the actual controller.
