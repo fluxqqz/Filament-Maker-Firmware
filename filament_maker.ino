@@ -55,6 +55,11 @@ const int stepsPerRevolution = 3200;
 const float GEAR_RATIO = 25.0; // Stepper turns 25x per 1 wheel revolution
 
 const float STABLE_BAND = 4.0; // Used to show stable/heat indicator
+// Runaway watchdog: more than RUNAWAY_BAND_C over setpoint for a whole window without cooling
+// at least RUNAWAY_MIN_DROP_C = heat still going in. Lower the drop if the block cools slower.
+const float RUNAWAY_BAND_C = 15.0;
+const unsigned long RUNAWAY_WINDOW_MS = 10000;
+const float RUNAWAY_MIN_DROP_C = 1.0;
 
 // ================= FREERTOS SHARED STATE =================
 // ponytail: one mutex serializes state, PID calculations and output writes.
@@ -1243,6 +1248,7 @@ void taskThermal(void* pvParameters) {
     float wheelRpm = rpm;
     bool wasFault = fault;
     static unsigned long overtempStartTime = 0;
+    static float overtempStartTemp = 0;
     static unsigned long riseCheckTime = 0;
     static float riseStartTemp = 0;
     static bool riseTracking = false;
@@ -1261,16 +1267,17 @@ void taskThermal(void* pvParameters) {
       }
     }
 
-    // Safety check 2: Overtemperature runaway (MOSFET short / stuck heat past setpoint)
-    if (heater && (temp > sp + 15.0)) {
-      if (overtempStartTime == 0) {
-        overtempStartTime = now;
-      } else if (now - overtempStartTime >= 10000) {
-        if (!fault) {
-          tripThermalFaultLocked("OVERTEMP RUNAWAY");
-          fault = true;
-          heater = false;
-        }
+    // Safety check 2: Overtemperature runaway (MOSFET short / stuck heat past setpoint).
+    // Passive cooldown after lowering the setpoint (Stage 2 -> Stage 1) is normal, so only
+    // trip when the block stays far above setpoint and is not cooling.
+    if (heater && (temp > sp + RUNAWAY_BAND_C)) {
+      if (overtempStartTime == 0 || overtempStartTemp - temp >= RUNAWAY_MIN_DROP_C) {
+        overtempStartTime = now; // First reading, or cooled another step: restart the window.
+        overtempStartTemp = temp;
+      } else if (now - overtempStartTime >= RUNAWAY_WINDOW_MS && !fault) {
+        tripThermalFaultLocked("OVERTEMP RUNAWAY");
+        fault = true;
+        heater = false;
       }
     } else {
       overtempStartTime = 0;

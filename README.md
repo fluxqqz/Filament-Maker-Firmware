@@ -63,6 +63,11 @@ match them to the installed hardware and calibrate temperature/speed on-device.
 - Sensor-range, overtemperature and heating-rise faults latch the heater off.
   Reset using the dashboard, a long encoder press, or serial `R` after the
   temperature returns to the safe range. Reset does not start the heater.
+- The runaway check trips when the block stays more than 15 °C above the
+  setpoint for 10 s without cooling at least 1 °C. Switching to a lower stage
+  (Stage 2 to Stage 1) cools passively and does not trip it. Tune
+  `RUNAWAY_BAND_C`, `RUNAWAY_WINDOW_MS` and `RUNAWAY_MIN_DROP_C` at the top of
+  the sketch if the hot end cools more slowly.
 
 ### LCD status and runtime
 

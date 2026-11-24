@@ -687,7 +687,7 @@ function setRPM2(btn) { applyInput('rpm2Input', '/rpm2', btn); }
 const FAULT_CAUSES = {
   "SENSOR DISCONNECTED": "Thermistor read below 0°C or invalid: open circuit, loose connector or broken wire. Heater is off.",
   "OVERTEMP HAZARD": "Temperature exceeded 280°C absolute limit: shorted thermistor, stuck MOSFET/driver or runaway. Heater is off.",
-  "OVERTEMP RUNAWAY": "Stayed 15°C+ above setpoint for 10 s with heater on: driver stuck on or thermistor out of the block. Heater is off.",
+  "OVERTEMP RUNAWAY": "Over 15°C above setpoint and not cooling for 10 s: driver stuck on or thermistor out of the block. Heater is off.",
   "HEATING FAILED": "Rose under 2°C in 40 s at high power: heater cartridge loose/dead, blown fuse/no 12V, or thermistor out of the block.",
   "INVALID PID OUTPUT": "PID produced a non-numeric output: check PID tuning values (Kp/Ki/Kd). Heater is off."
 };

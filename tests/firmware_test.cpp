@@ -450,6 +450,50 @@ void testStepper2Controls() {
   thermalFault = false;
 }
 
+int adcForTemp(float c) { // Inverse of readTempC().
+  float r = NOMINAL_RESISTANCE * exp(BETA_COEFFICIENT * (1.0 / (c + 273.15) - 1.0 / (NOMINAL_TEMPERATURE + 273.15)));
+  return (int)lround(4095.0 * r / (SERIES_RESISTOR + r));
+}
+
+void thermalCycleAt(float c) { // One 100 ms thermal-loop iteration with the block at c.
+  analogValue = adcForTemp(c);
+  adcFiltered = 0;
+  thermalCycles = 1;
+  try { taskThermal(nullptr); } catch (EndTask&) {}
+}
+
+// Stage 2 -> Stage 1 at 220 -> 180 C, then `seconds` of the block moving at `ratePerSec`.
+void switchToLowerStage(float ratePerSec, int seconds) {
+  stopAll();
+  thermalFault = false;
+  step2Setpoint = 220; step1Setpoint = 180;
+  startStep2();
+  for (int i = 0; i < 5; ++i) thermalCycleAt(220);
+  startStep1();
+  float t = 220;
+  for (int i = 0; i < seconds * 10 && !thermalFault; ++i) {
+    thermalCycleAt(t);
+    t += ratePerSec * 0.1f;
+  }
+}
+
+void testRunawayWatchdog() {
+  switchToLowerStage(-1.0f, 30); // Passive cooldown after lowering the setpoint is normal.
+  assert(!thermalFault && heaterEnabled && currentStep == 1 && pwmOutput == 0);
+  switchToLowerStage(-0.15f, 30); // Even slowly, as long as it keeps falling.
+  assert(!thermalFault);
+  switchToLowerStage(0.0f, 12); // Holding 40 C over setpoint: driver stuck on.
+  assert(thermalFault && faultReason == "OVERTEMP RUNAWAY" && !heaterEnabled);
+  switchToLowerStage(0.2f, 12); // Rising over setpoint.
+  assert(thermalFault && faultReason == "OVERTEMP RUNAWAY");
+  switchToLowerStage(-1.0f, 6); // Cools to 214 C, then stops falling.
+  for (int i = 0; i < 120 && !thermalFault; ++i) thermalCycleAt(214);
+  assert(thermalFault && faultReason == "OVERTEMP RUNAWAY");
+  stopAll();
+  thermalFault = false;
+  faultReason = "";
+}
+
 int main() {
   setup();
   testRuntimeAndStatus();
@@ -461,5 +505,6 @@ int main() {
   testConnectionPersistenceAndCancel();
   testFaultPriorityAndStops();
   testStepper2Controls();
-  std::cout << "Firmware checks passed: runtime, LCD, live Wi-Fi/SSID scrolling, scrolling menu, inactivity, password editor, scan, connect, persistence, cancel, faults, stops, stepper 2\n";
+  testRunawayWatchdog();
+  std::cout << "Firmware checks passed: runtime, LCD, live Wi-Fi/SSID scrolling, scrolling menu, inactivity, password editor, scan, connect, persistence, cancel, faults, stops, stepper 2, runaway watchdog\n";
 }
