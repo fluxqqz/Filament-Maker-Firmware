@@ -13,7 +13,7 @@ const limits = Object.fromEntries(['MIN_SETPOINT', 'MAX_SETPOINT', 'MIN_RPM', 'M
 
 const css = `
 /* SIMULATOR TOOLBAR (PREVIEW ONLY) */
-body { padding-bottom: 72px; }
+
 .sim-toolbar { position: fixed; bottom: 16px; right: 16px; z-index: 9999; display: flex; align-items: center; gap: 8px;
   flex-wrap: wrap; background: #18222C; color: #fff; padding: 8px 12px; border-radius: 10px;
   box-shadow: 0 8px 24px rgba(0,0,0,.22); border: 1px solid rgba(255,255,255,.12); }
@@ -22,7 +22,7 @@ body { padding-bottom: 72px; }
   border-radius: 6px; padding: 0 10px; font-size: 11px; font-weight: 600; cursor: pointer; }
 .sim-btn:hover { background: #3B4E63; color: #fff; }
 .sim-btn.active { background: var(--orange); border-color: var(--orange); color: #fff; }
-@media (max-width: 600px) { .sim-toolbar { left: 8px; right: 8px; bottom: 8px; justify-content: center; } .sim-label { display: none; } }
+@media (max-width: 600px) { body { padding-bottom: 60px; } .sim-toolbar { left: 8px; right: 8px; bottom: 8px; justify-content: center; } .sim-label { display: none; } }
 `;
 
 const toolbar = `

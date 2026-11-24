@@ -62,7 +62,7 @@ describe('Dashboard Web UI & Polling Regression Suite', () => {
       systemBadgeText: 'Awaiting device status',
       liveStatusText: 'Readings are unconfirmed until the device responds.', ipDisplay: 'Waiting for device address',
       tempBig: '0.0', setpointBig: '0.0', pwmPct: '0', hotendPill: 'OFF', pullerPill: 'OFF', cutterPill: 'OFF',
-      cutterToggleBtn: 'Start Cutter', step3ToggleBtn: 'Start Puller'
+      cutterToggleBtn: 'Start Cutter', step3ToggleBtn: 'Start Puller', heaterTileVal: 'OFF', pullerTileVal: 'OFF', cutterTileVal: 'OFF'
     };
     for (const [k, v] of Object.entries(expected)) assert.equal(els[k].innerText, v);
     for (const k of ['systemBadge', 'sysBadgeDot']) assert.match(els[k].className, /\bpending\b/);
@@ -88,8 +88,8 @@ describe('Dashboard Web UI & Polling Regression Suite', () => {
     const expected = {
       tempBig: '215.3', setpointBig: '210.0', pwmPct: '50', pwmRaw: '128', rpmVal: '15.0',
       ipDisplay: '192.168.1.100 (filament-maker-test.local)', hotendPill: 'STABLE', pullerPill: 'RUNNING',
-      step3ToggleBtn: 'Stop Puller', pullerHint: 'Hot end at temperature.', cutterPill: 'OFF', cutterRpmVal: '0.0',
-      cutterToggleBtn: 'Start Cutter', step1Pill: 'STABLE', step1ToggleBtn: 'Stop Stage 1', step2ToggleBtn: 'Start Stage 2'
+      step3ToggleBtn: 'Stop Puller', pullerHint: 'Hot end at temperature', hotendStatus: 'Stage 1 at 210.0 °C', cutterStatus: 'Set to 15.0 RPM', cutterPill: 'OFF', cutterRpmVal: '0.0',
+      cutterToggleBtn: 'Start Cutter', heaterTileVal: 'ON', pullerTileVal: 'RUNNING', cutterTileVal: 'OFF', step1Pill: 'STABLE', step1ToggleBtn: 'Stop Stage 1', step2ToggleBtn: 'Start Stage 2'
     };
     for (const [k, v] of Object.entries(expected)) assert.equal(env.els[k].innerText, v);
     for (const [k, v] of Object.entries({ hotendCard: 'station active', pullerCard: 'station active', cutterCard: 'station', step1Card: 'stage-row active', step2Card: 'stage-row' })) {
@@ -103,14 +103,19 @@ describe('Dashboard Web UI & Polling Regression Suite', () => {
     await env.flush();
     assert.equal(env.els.pullerHint.className, 'hint warn');
     assert.equal(env.els.hotendPill.innerText, 'HEATING');
+    assert.equal(env.els.hotendStatus.innerText, 'Stage 1: 215.3 °C, target 210.0 °C');
+    assert.equal(env.els.cutterStatus.innerText, 'Set to 7.5 RPM');
     assert.equal(env.els.cutterRpmVal.innerText, '7.5');
     assert.equal(env.els.cutterPill.innerText, 'RUNNING');
     assert.equal(env.els.cutterToggleBtn.innerText, 'Stop Cutter');
+    assert.equal(env.els.cutterTileVal.innerText, 'RUNNING');
+    assert.equal(env.els.cutterTile.className, 'status-tile');
     cur = { ...cur, heater: false, stepper: false };
     env.poll();
     await env.flush();
     assert.equal(env.els.pullerHint.className, 'hint');
     assert.equal(env.els.hotendPill.innerText, 'OFF');
+    assert.equal(env.els.hotendStatus.innerText, 'Not heating');
   });
 
   it('stage, puller and cutter handlers hit the firmware endpoints', async () => {

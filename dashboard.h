@@ -127,6 +127,11 @@ body {
   padding: 24px 40px 32px;
 }
 
+/* PAGE HEADER (scrolls away; Stop All stays in the top bar) */
+.page-header { margin-bottom: 20px; }
+.page-title { font-size: 30px; font-weight: 700; }
+.page-subtitle { font-size: 15px; color: var(--text-muted); margin-top: 4px; }
+
 /* FAULT ALERT BANNER */
 .fault-banner {
   background: #B71C1C;
@@ -156,9 +161,9 @@ body {
 /* STATIONS: one card per machine station, in material order */
 .stations {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr) minmax(0, 1fr); /* Hot end holds two stages side by side */
   gap: 20px;
-  align-items: start;
+  align-items: stretch;
   margin-bottom: 20px;
 }
 .station {
@@ -167,7 +172,11 @@ body {
   border-radius: 12px;
   padding: 22px;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
+/* Equal-height cards: keep each card's setting and start/stop at the bottom. */
+.station-controls { margin-top: auto; }
 .station.active {
   border-color: var(--green);
   box-shadow: 0 0 0 2px var(--green-bg);
@@ -219,12 +228,48 @@ body {
   margin-bottom: 6px;
   display: block;
 }
-.readout { display: flex; align-items: baseline; gap: 4px; margin-bottom: 16px; }
+.readout { display: flex; align-items: baseline; gap: 4px; margin-bottom: 6px; }
 .readout-val { font-size: 40px; font-weight: 800; color: var(--navy-dark); line-height: 1; }
 .readout-unit { font-size: 16px; font-weight: 600; color: var(--navy-dark); }
-.temp-large { font-size: 52px; }
-.readout-target { font-size: 14px; color: var(--text-muted); margin-left: 8px; }
-.readout-target b { color: var(--text-main); font-size: 16px; }
+
+/* OVERVIEW CARD */
+.overview-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-card);
+  border-radius: 12px;
+  padding: 24px 28px;
+  margin-bottom: 20px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) 1px minmax(0, 0.8fr) minmax(0, 1.6fr);
+  gap: 28px;
+  align-items: center;
+}
+.overview-card > * { min-width: 0; }
+.overview-card .readout { margin-bottom: 0; }
+.temp-large { font-size: 60px; }
+.temp-unit { font-size: 26px; }
+.setpoint-row { margin-top: 12px; font-size: 13px; color: var(--text-muted); }
+.setpoint-val { font-size: 18px; font-weight: 700; color: var(--text-main); margin-left: 4px; }
+.card-divider { width: 1px; height: 100%; background: var(--border-card); }
+.pwm-val { font-size: 32px; font-weight: 700; margin-bottom: 10px; }
+.tiles-col { display: flex; gap: 12px; }
+.status-tile {
+  flex: 1;
+  min-width: 0;
+  background: #F4F7F4;
+  border-radius: 10px;
+  padding: 14px 12px;
+  display: flex;
+  flex-direction: column;
+}
+.status-tile.off { background: #F5F5F5; }
+.tile-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.tile-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+.status-tile.off .tile-dot { background: #9E9E9E; }
+.tile-title { font-size: 11px; font-weight: 700; letter-spacing: 0.8px; color: var(--text-muted); }
+.tile-value { font-size: 20px; font-weight: 800; color: var(--green); margin-bottom: 4px; }
+.status-tile.off .tile-value { color: #757575; }
+.tile-desc { font-size: 11px; color: var(--text-muted); }
 
 .progress-track {
   height: 8px;
@@ -236,24 +281,24 @@ body {
 .progress-fill { height: 100%; width: 0%; background: var(--navy-dark); transition: width 0.3s ease; }
 .pwm-desc { font-size: 12px; color: var(--text-muted); }
 
-.hint {
-  font-size: 12px;
-  line-height: 1.4;
+/* One fixed-height status line per station keeps the three cards the same height. */
+.status-line, .hint {
+  height: 20px;
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 20px;
   color: var(--text-muted);
-  margin-bottom: 14px;
-  min-height: 17px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .hint.ok { color: var(--green); font-weight: 600; }
-.hint.warn {
-  color: var(--orange);
-  background: var(--orange-bg);
-  border-radius: 6px;
-  padding: 8px 10px;
-  font-weight: 600;
-}
+.hint.warn { color: var(--orange); font-weight: 700; }
 
 /* Heating stages inside the hot end card */
-.stage-row { border-top: 1px solid #EEE; margin-top: 18px; padding-top: 16px; }
+.stages { margin-top: auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.stage-row { min-width: 0; border: 1px solid var(--border-card); border-radius: 10px; padding: 14px; }
+.stage-row.active { border-color: var(--green); box-shadow: 0 0 0 2px var(--green-bg); }
 .stage-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
 .stage-name { font-size: 15px; font-weight: 700; }
 .stage-row.active .stage-name { color: var(--green); }
@@ -320,6 +365,13 @@ button { touch-action: manipulation; transition: background 0.15s ease; }
 button:focus-visible, input:focus-visible { outline: 3px solid var(--navy-dark); outline-offset: 3px; }
 
 /* RESPONSIVE: stack stations in material order */
+@media (max-width: 1100px) {
+  .overview-card { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; }
+  .card-divider { display: none; }
+  .tiles-col { grid-column: 1 / -1; }
+  .stage-row { padding: 10px; }
+  .stage-row .btn-apply { min-width: 60px; padding: 0 10px; }
+}
 @media (max-width: 960px) {
   .topbar-inner { padding: 10px 16px; }
   .main-wrapper { padding: 16px 16px 24px; }
@@ -332,7 +384,14 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--navy-dark);
   .badge-online, .badge-fault { padding: 6px 8px; }
   .btn-estop { padding: 0 12px; letter-spacing: 0.3px; }
   .station { padding: 18px; }
-  .temp-large { font-size: 44px; }
+  .stages { grid-template-columns: minmax(0, 1fr); }
+  .page-title { font-size: 24px; }
+  .page-subtitle { font-size: 14px; }
+  .overview-card { grid-template-columns: minmax(0, 1fr); padding: 20px; gap: 20px; }
+  .tiles-col { gap: 8px; }
+  .status-tile { padding: 12px 10px; }
+  .tile-value { font-size: 17px; }
+  .temp-large { font-size: 48px; }
   .fault-banner { flex-direction: column; align-items: flex-start; }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -360,6 +419,11 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--navy-dark);
 
 <main class="main-wrapper">
 
+  <div class="page-header">
+    <h1 class="page-title">Controller overview</h1>
+    <p class="page-subtitle">Monitor temperature, manage process steps, and control output.</p>
+  </div>
+
   <!-- FAULT ALERT BANNER -->
   <div id="faultBanner" class="fault-banner">
     <div>
@@ -368,6 +432,44 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--navy-dark);
     </div>
     <button class="btn-fault-reset" onclick="resetFault()">Reset Fault</button>
   </div>
+
+  <!-- OVERVIEW CARD -->
+  <section class="overview-card" aria-label="Machine overview">
+    <div class="temp-col">
+      <span class="label-sub">Current temperature</span>
+      <div class="readout">
+        <span class="readout-val temp-large" id="tempBig">0.0</span><span class="readout-unit temp-unit">&deg;C</span>
+      </div>
+      <div class="setpoint-row">Target Setpoint: <span class="setpoint-val" id="setpointBig">0.0</span>&deg;C</div>
+    </div>
+
+    <div class="card-divider"></div>
+
+    <div class="pwm-col">
+      <span class="label-sub">Heater output</span>
+      <div class="pwm-val"><span id="pwmPct">0</span>%</div>
+      <div class="progress-track"><div class="progress-fill" id="pwmFill"></div></div>
+      <span class="pwm-desc">Power modulation (PWM: <span id="pwmRaw">0</span>)</span>
+    </div>
+
+    <div class="tiles-col">
+      <div class="status-tile off" id="cutterTile">
+        <div class="tile-head"><span class="tile-dot"></span><span class="tile-title">CUTTER</span></div>
+        <span class="tile-value" id="cutterTileVal">OFF</span>
+        <span class="tile-desc">Bottle strip cutter</span>
+      </div>
+      <div class="status-tile off" id="heaterTile">
+        <div class="tile-head"><span class="tile-dot"></span><span class="tile-title">HEATER</span></div>
+        <span class="tile-value" id="heaterTileVal">OFF</span>
+        <span class="tile-desc">Temperature control</span>
+      </div>
+      <div class="status-tile off" id="pullerTile">
+        <div class="tile-head"><span class="tile-dot"></span><span class="tile-title">PULLER</span></div>
+        <span class="tile-value" id="pullerTileVal">OFF</span>
+        <span class="tile-desc">Output wheel drive</span>
+      </div>
+    </div>
+  </section>
 
   <div class="stations">
 
@@ -382,13 +484,16 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--navy-dark);
 
       <span class="label-sub">Motor speed</span>
       <div class="readout"><span class="readout-val" id="cutterRpmVal">0.0</span><span class="readout-unit">RPM</span></div>
+      <p class="status-line" id="cutterStatus"></p>
 
-      <label class="label-sub" for="rpm2Input">Target (0.1&ndash;60 RPM)</label>
-      <div class="input-row">
-        <input type="number" min="0.1" max="60" step="0.1" class="text-input" id="rpm2Input" oninput="markInputEdited(this)">
-        <button class="btn-apply" id="rpm2ApplyBtn" onclick="setRPM2(this)">Apply</button>
+      <div class="station-controls">
+        <label class="label-sub" for="rpm2Input">Target (0.1&ndash;60 RPM)</label>
+        <div class="input-row">
+          <input type="number" min="0.1" max="60" step="0.1" class="text-input" id="rpm2Input" oninput="markInputEdited(this)">
+          <button class="btn-apply" id="rpm2ApplyBtn" onclick="setRPM2(this)">Apply</button>
+        </div>
+        <button class="btn-step-toggle" id="cutterToggleBtn" onclick="toggleCutter()">Start Cutter</button>
       </div>
-      <button class="btn-step-toggle" id="cutterToggleBtn" onclick="toggleCutter()">Start Cutter</button>
     </section>
 
     <!-- 2 HOT END (heater, stages 1 and 2) -->
@@ -399,15 +504,9 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--navy-dark);
         <span class="step-pill" id="hotendPill">OFF</span>
       </div>
       <p class="station-desc">Heats the strip through two heating stages.</p>
+      <p class="status-line" id="hotendStatus">Not heating</p>
 
-      <span class="label-sub">Temperature</span>
-      <div class="readout">
-        <span class="readout-val temp-large" id="tempBig">0.0</span><span class="readout-unit">&deg;C</span>
-        <span class="readout-target">target <b id="setpointBig">0.0</b>&deg;C</span>
-      </div>
-      <div class="progress-track"><div class="progress-fill" id="pwmFill"></div></div>
-      <span class="pwm-desc">Heater power <b><span id="pwmPct">0</span>%</b> (PWM <span id="pwmRaw">0</span>)</span>
-
+      <div class="stages">
       <div class="stage-row" id="step1Card">
         <div class="stage-head">
           <span class="stage-name">Stage 1</span>
@@ -433,6 +532,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--navy-dark);
         </div>
         <button class="btn-step-toggle" id="step2ToggleBtn" onclick="toggleStep2()">Start Stage 2</button>
       </div>
+      </div>
     </section>
 
     <!-- 3 PULLER (stepper 1, output wheel) -->
@@ -448,12 +548,14 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--navy-dark);
       <div class="readout"><span class="readout-val" id="rpmVal">0.0</span><span class="readout-unit">RPM</span></div>
       <p class="hint" id="pullerHint" role="status"></p>
 
-      <label class="label-sub" for="rpmInput">Target (0.1&ndash;60 RPM)</label>
-      <div class="input-row">
-        <input type="number" min="0.1" max="60" step="0.1" class="text-input" id="rpmInput" oninput="markInputEdited(this)">
-        <button class="btn-apply" id="rpmApplyBtn" onclick="setRPM(this)">Apply</button>
+      <div class="station-controls">
+        <label class="label-sub" for="rpmInput">Target (0.1&ndash;60 RPM)</label>
+        <div class="input-row">
+          <input type="number" min="0.1" max="60" step="0.1" class="text-input" id="rpmInput" oninput="markInputEdited(this)">
+          <button class="btn-apply" id="rpmApplyBtn" onclick="setRPM(this)">Apply</button>
+        </div>
+        <button class="btn-step-toggle" id="step3ToggleBtn" onclick="toggleStep3()">Start Puller</button>
       </div>
-      <button class="btn-step-toggle" id="step3ToggleBtn" onclick="toggleStep3()">Start Puller</button>
     </section>
 
   </div>
@@ -594,6 +696,11 @@ function resetFault() {
   fetch('/resetfault');
 }
 
+function setTile(tile, val, on, onText) {
+  tile.className = on ? "status-tile" : "status-tile off";
+  val.innerText = on ? onText : "OFF";
+}
+
 // One running/stopped look for a card or stage row, its pill and its start/stop button.
 function setRun(box, base, pill, onText, btn, on, startText, stopText) {
   box.className = base + (on ? ' active' : '');
@@ -646,6 +753,12 @@ function pollStatus() {
       document.getElementById("hotendCard").className = data.heater ? "station active" : "station";
       hotPill.className = data.heater ? "step-pill active" : "step-pill";
       hotPill.innerText = data.heater ? (data.stable ? "STABLE" : "HEATING") : "OFF";
+      let stageName = data.step === 1 || data.step === 2 ? "Stage " + data.step : "Heater on";
+      document.getElementById("hotendStatus").innerText = !data.heater ? "Not heating"
+        : data.stable ? stageName + " at " + data.setpoint.toFixed(1) + " °C"
+        : stageName + ": " + data.temp.toFixed(1) + " °C, target " + data.setpoint.toFixed(1) + " °C";
+      setTile(document.getElementById("heaterTile"), document.getElementById("heaterTileVal"), data.heater, "ON");
+      setTile(document.getElementById("pullerTile"), document.getElementById("pullerTileVal"), data.stepper, "RUNNING");
 
       let stageText = data.stable ? "STABLE" : "HEATING";
       setRun(document.getElementById("step1Card"), "stage-row", document.getElementById("step1Pill"), stageText,
@@ -658,15 +771,17 @@ function pollStatus() {
       setRun(document.getElementById("pullerCard"), "station", document.getElementById("pullerPill"), "RUNNING",
              document.getElementById("step3ToggleBtn"), data.stepper, "Start Puller", "Stop Puller");
       let hint = document.getElementById("pullerHint");
+      hint.title = "";
       if (hotReady) {
         hint.className = "hint ok";
-        hint.innerText = "Hot end at temperature.";
+        hint.innerText = "Hot end at temperature";
       } else if (data.stepper) {
         hint.className = "hint warn";
-        hint.innerText = "Hot end not at temperature. The strip may snap.";
+        hint.innerText = "Hot end not at temperature";
+        hint.title = "Pulling below temperature can snap the strip.";
       } else {
         hint.className = "hint";
-        hint.innerText = "Start once the hot end is at temperature.";
+        hint.innerText = "Start once hot end is at temperature";
       }
 
       // Cutter (older firmware omits these fields)
@@ -676,6 +791,8 @@ function pollStatus() {
           data.stepper2 && Number.isFinite(data.rpm2) ? data.rpm2.toFixed(1) : "0.0";
         setRun(document.getElementById("cutterCard"), "station", document.getElementById("cutterPill"), "RUNNING",
                document.getElementById("cutterToggleBtn"), data.stepper2, "Start Cutter", "Stop Cutter");
+        setTile(document.getElementById("cutterTile"), document.getElementById("cutterTileVal"), data.stepper2, "RUNNING");
+        if (Number.isFinite(data.rpm2)) document.getElementById("cutterStatus").innerText = "Set to " + data.rpm2.toFixed(1) + " RPM";
       }
 
       // Keep unsaved edits even after the input loses focus.
