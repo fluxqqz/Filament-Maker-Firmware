@@ -175,10 +175,20 @@ cl /nologo /std:c++17 /EHsc tests\firmware_test.cpp /Fe:"%TEMP%\filament-firmwar
 "%TEMP%\filament-firmware-test.exe"
 ```
 
-It checks runtime start/stop/rollover, LCD output and live-SSID scrolling, all six
+It checks runtime start/stop/rollover, LCD output and live-SSID scrolling, all seven
 menu actions, one-line scrolling and boundaries, menu inactivity/interaction/rollover, Wi-Fi timeout
 exemption and return navigation, password editing, scan results, connection
 timeout/cancel/retry, credential saving/reload and fault priority.
 The Arduino build checks real-library compatibility. Physical encoder feel,
 Wi-Fi association, PWM timing, sensor calibration and shutdown behavior still
 require a bench check on the actual controller.
+
+### LCD preview
+
+`tests/lcd_preview.cpp` runs the sketch's own LCD code through the status, menu,
+Wi-Fi setup and fault screens and writes them to a standalone HTML page:
+
+```sh
+c++ -std=c++17 tests/lcd_preview.cpp -o /tmp/lcd-preview
+/tmp/lcd-preview lcd-preview.html
+```
