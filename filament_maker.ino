@@ -26,7 +26,7 @@
 Preferences prefs;
 
 // ================= THERMISTOR =================
-const int THERM_PIN = 1;
+const int THERM_PIN = 2;
 
 const float SERIES_RESISTOR = 10000.0;
 const float NOMINAL_RESISTANCE = 100000.0;
@@ -823,7 +823,7 @@ void lcdShowStatus() {
     (unsigned long long)(elapsedSeconds / 3600), (unsigned int)(elapsedSeconds / 60 % 60),
     (unsigned int)(elapsedSeconds % 60));
   lcdLine(0, "TEMP:" + String(temp, 1) + "/" + String(sp, 1) + "C");
-  lcdLine(1, "PULL:" + String(mot ? r : 0.0f, 1) + " CUT:" + String(mot2 ? r2 : 0.0f, 1)); // RPM
+  lcdLine(1, "CUT:" + String(mot2 ? r2 : 0.0f, 1) + " PULL:" + String(mot ? r : 0.0f, 1)); // RPM, in material order
   lcdLine(2, runtime);
   lcdLine(3, "WiFi: " + (connectedSSID.length() ?
     lcdNetworkName(connectedSSID, 14, true, wifiStatusScrollStart) : String("Not connected")));

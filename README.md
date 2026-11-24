@@ -66,12 +66,12 @@ match them to the installed hardware and calibrate temperature/speed on-device.
 
 ### LCD status and runtime
 
-The 20×4 main screen shows current/target temperature, commanded puller wheel
-RPM and cutter motor RPM (each zero when stopped), the current run timer, and the connected Wi-Fi network:
+The 20×4 main screen shows current/target temperature, commanded cutter motor
+RPM and puller wheel RPM (each zero when stopped), the current run timer, and the connected Wi-Fi network:
 
 ```text
 TEMP:215.3/220.0C
-PULL:15.0 CUT:8.0
+CUT:8.0 PULL:15.0
 RUNTIME 00:12:34
 WiFi: Network-B
 ```

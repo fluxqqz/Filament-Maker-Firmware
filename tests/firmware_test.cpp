@@ -42,7 +42,7 @@ void testRuntimeAndStatus() {
   assert(motorElapsedMs == 13345);
   fakeMillis += 10000;
   lcdShowStatus();
-  assertLcdRow(1, "PULL:0.0 CUT:0.0");
+  assertLcdRow(1, "CUT:0.0 PULL:0.0");
   assert(lcd.rows[2].find("RUNTIME 00:00:13") == 0);
   assertLcdRow(3, "WiFi: Not connected");
   startStep3();
@@ -53,7 +53,7 @@ void testRuntimeAndStatus() {
   lcd.rows[2].assign(20, 'X'); // Reordered rows must overwrite the previous layout.
   lcdShowStatus();
   assert(lcd.rows[0].find("TEMP:215.3/220.0C") == 0);
-  assertLcdRow(1, "PULL:15.0 CUT:0.0");
+  assertLcdRow(1, "CUT:0.0 PULL:15.0");
   assert(lcd.rows[2].find("RUNTIME 00:12:34") == 0);
   assertLcdRow(3, "WiFi: Not connected");
   stopAll();
@@ -208,7 +208,7 @@ void testControlMenuTimeout() {
   ++fakeMillis;
   lcdRefresh(false); // Must expire even inside the normal 250ms render throttle.
   assert(uiMode == UI_STATUS && heaterEnabled && motorRunning);
-  assertLcdRow(1, "PULL:15.0 CUT:0.0");
+  assertLcdRow(1, "CUT:0.0 PULL:15.0");
   stopAll();
 
   fakeMillis = 0xfffffff0u;
@@ -428,7 +428,7 @@ void testStepper2Controls() {
   server.routes.at("/stepper2")();
   assert(motor2Running && toneValues[STEP2_PIN] == 800 && menuLabel(2) == "Stop CUTTER"); // 15 RPM * 3200 / 60
   lcdRefresh(true);
-  assertLcdRow(1, "PULL:0.0 CUT:15.0");
+  assertLcdRow(1, "CUT:15.0 PULL:0.0");
   assert(!motorRunning); // stepper 1 untouched
   server.arguments["value"] = "60";
   server.routes.at("/rpm2")();
