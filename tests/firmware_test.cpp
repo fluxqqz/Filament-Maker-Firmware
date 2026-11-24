@@ -126,7 +126,7 @@ void testControlMenuScrollingAndActions() {
   stopAll();
   onButtonShort();
   assert(uiMode == UI_MENU && MENU_COUNT == 7 && menuIndex == 0 && menuTop == 0);
-  const char* labels[] = {"Start S1 100C", "Start S2 200C", "Start PULLER", "STOP ALL", "IP:192.168.1.1", "Wi-Fi Setup", "Start CUTTER"};
+  const char* labels[] = {"Start S1 100C", "Start S2 200C", "Start CUTTER", "Start PULLER", "STOP ALL", "IP:192.168.1.1", "Wi-Fi Setup"};
   for (int i = 0; i < MENU_COUNT; ++i) assert(menuLabel(i) == labels[i]);
   int clears = lcd.clearCount;
   lcdRefresh(true);
@@ -138,8 +138,8 @@ void testControlMenuScrollingAndActions() {
     assert(menuIndex == i && menuTop == downTop[i]);
     assert(lcd.rows[i - menuTop][0] == '>');
   }
-  assertLcdRow(0, " STOP ALL");
-  assertLcdRow(3, ">Start CUTTER");
+  assertLcdRow(0, " Start PULLER");
+  assertLcdRow(3, ">Wi-Fi Setup");
   onEncoderTurn(1); lcdRefresh(true);
   assert(menuIndex == 6 && menuTop == 3);
   const int upTop[] = {0, 1, 2, 3, 3, 3, 3};
@@ -160,7 +160,11 @@ void testControlMenuScrollingAndActions() {
   onButtonShort();
   assert(!heaterEnabled);
   onEncoderTurn(1); onButtonShort();
-  assert(motorRunning && menuLabel(2) == "Stop PULLER");
+  assert(motor2Running && !motorRunning && menuLabel(2) == "Stop CUTTER");
+  onButtonShort();
+  assert(!motor2Running);
+  onEncoderTurn(1); onButtonShort();
+  assert(motorRunning && !motor2Running && menuLabel(3) == "Stop PULLER");
   onButtonShort();
   assert(!motorRunning);
   // Puller start/stop must not change which heating stage is active.
@@ -174,9 +178,9 @@ void testControlMenuScrollingAndActions() {
   assert(uiMode == UI_STATUS && !heaterEnabled && !motorRunning);
   assert(pwmValues[RPWM_PIN] == 0 && toneValues[STEP_PIN] == 0);
   onButtonShort();
-  for (int i = 0; i < 4; ++i) onEncoderTurn(1);
+  for (int i = 0; i < 5; ++i) onEncoderTurn(1);
   onButtonShort();
-  assert(uiMode == UI_MENU && menuIndex == 4 && wifiRequest == WREQ_NONE);
+  assert(uiMode == UI_MENU && menuIndex == 5 && wifiRequest == WREQ_NONE);
   onEncoderTurn(1); onButtonShort();
   assert(uiMode == UI_WIFI_NETWORKS && wifiRequest == WREQ_SCAN);
   onButtonLong(); processWifiSetup();
@@ -194,7 +198,7 @@ void testControlMenuTimeout() {
   fakeMillis += MENU_IDLE_TIMEOUT_MS - 1;
   lcdRefresh(true);
   assert(uiMode == UI_MENU);
-  for (int i = 0; i < 4; ++i) onEncoderTurn(1);
+  for (int i = 0; i < 5; ++i) onEncoderTurn(1);
   ++fakeMillis;
   onButtonShort(); // The informational IP item also resets inactivity.
   assert(lastMenuInteractionMs == fakeMillis);
@@ -234,9 +238,9 @@ void testControlMenuTimeout() {
   inputValues.clear();
 
   onButtonShort();
-  for (int i = 0; i < 5; ++i) onEncoderTurn(1);
+  for (int i = 0; i < 6; ++i) onEncoderTurn(1);
   lcdRefresh(true);
-  assert(menuIndex == 5 && menuTop == 2);
+  assert(menuIndex == 6 && menuTop == 3);
   for (UiMode mode : {UI_WIFI_NETWORKS, UI_WIFI_PASSWORD, UI_WIFI_PROGRESS}) {
     uiMode = mode;
     wifiSetupState = WIFI_SETUP_CONNECTING;
@@ -250,7 +254,7 @@ void testControlMenuTimeout() {
   onButtonShort();
   lcdRefresh(false);
   assert(uiMode == UI_MENU && lastMenuInteractionMs == fakeMillis);
-  assert(menuIndex == 5 && menuTop == 2);
+  assert(menuIndex == 6 && menuTop == 3);
   assertLcdRow(3, ">Wi-Fi Setup");
   processWifiSetup();
   fakeMillis += MENU_IDLE_TIMEOUT_MS - 1; lcdRefresh(true);
@@ -419,10 +423,10 @@ void testFaultPriorityAndStops() {
 void testStepper2Controls() {
   resetWifi();
   stopAll();
-  assert(!motor2Running && toneValues[STEP2_PIN] == 0 && menuLabel(6) == "Start CUTTER");
+  assert(!motor2Running && toneValues[STEP2_PIN] == 0 && menuLabel(2) == "Start CUTTER");
   server.arguments["state"] = "on";
   server.routes.at("/stepper2")();
-  assert(motor2Running && toneValues[STEP2_PIN] == 800 && menuLabel(6) == "Stop CUTTER"); // 15 RPM * 3200 / 60
+  assert(motor2Running && toneValues[STEP2_PIN] == 800 && menuLabel(2) == "Stop CUTTER"); // 15 RPM * 3200 / 60
   lcdRefresh(true);
   assertLcdRow(1, "PULL:0.0 CUT:15.0");
   assert(!motorRunning); // stepper 1 untouched
@@ -432,9 +436,9 @@ void testStepper2Controls() {
   server.arguments["value"] = "61";
   server.routes.at("/rpm2")();
   assert(rpm2 == 60.0f && server.responseCode == 400);
-  activateMenuItem(6);
+  activateMenuItem(2);
   assert(!motor2Running && toneValues[STEP2_PIN] == 0);
-  activateMenuItem(6);
+  activateMenuItem(2);
   assert(motor2Running);
   server.routes.at("/stopall")();
   assert(!motor2Running && toneValues[STEP2_PIN] == 0);

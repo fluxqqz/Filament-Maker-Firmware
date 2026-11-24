@@ -90,11 +90,11 @@ The seven menu items are:
 
 1. Start/Stop Stage 1, with its configured temperature
 2. Start/Stop Stage 2, with its configured temperature
-3. Start/Stop Puller
-4. STOP ALL
-5. IP Address
-6. Wi-Fi Setup
-7. Start/Stop Cutter
+3. Start/Stop Cutter
+4. Start/Stop Puller
+5. STOP ALL
+6. IP Address
+7. Wi-Fi Setup
 
 Rotate to move the `>` cursor and click to activate the selected item. The four
 visible rows scroll one line at a time as the cursor reaches the screen edge,

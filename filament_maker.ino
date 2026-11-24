@@ -779,11 +779,11 @@ String menuLabel(int idx) {
   switch (idx) {
     case 0: return String(step == 1 ? "Stop S1 " : "Start S1 ") + String(s1sp, 0) + "C";
     case 1: return String(step == 2 ? "Stop S2 " : "Start S2 ") + String(s2sp, 0) + "C";
-    case 2: return String(mot ? "Stop PULLER" : "Start PULLER");
-    case 3: return "STOP ALL";
-    case 4: return "IP:" + (WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "192.168.1.1");
-    case 5: return "Wi-Fi Setup";
-    case 6: return String(mot2 ? "Stop CUTTER" : "Start CUTTER");
+    case 2: return String(mot2 ? "Stop CUTTER" : "Start CUTTER");
+    case 3: return String(mot ? "Stop PULLER" : "Start PULLER");
+    case 4: return "STOP ALL";
+    case 5: return "IP:" + (WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "192.168.1.1");
+    case 6: return "Wi-Fi Setup";
     default: return "";
   }
 }
@@ -918,25 +918,25 @@ void activateMenuItem(int idx) {
       break;
     }
     case 2: {
+      LOCK_STATE(); bool mot2 = motor2Running; UNLOCK_STATE();
+      if (mot2) stopStepper2(); else startStepper2();
+      break;
+    }
+    case 3: {
       LOCK_STATE(); bool mot = motorRunning; UNLOCK_STATE();
       if (mot) stopStep3(); else startStep3();
       break;
     }
-    case 3:
+    case 4:
       stopAll();
       uiMode = UI_STATUS;
       lcd.clear();
       lcdForce();
       return;
-    case 4:
+    case 5:
       // Informational IP item
       break;
-    case 5: requestWifiScan(); return;
-    case 6: {
-      LOCK_STATE(); bool mot2 = motor2Running; UNLOCK_STATE();
-      if (mot2) stopStepper2(); else startStepper2();
-      break;
-    }
+    case 6: requestWifiScan(); return;
   }
   lcdForce();
 }
