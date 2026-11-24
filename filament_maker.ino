@@ -26,7 +26,7 @@
 Preferences prefs;
 
 // ================= THERMISTOR =================
-const int THERM_PIN = 15;
+const int THERM_PIN = 1;
 
 const float SERIES_RESISTOR = 10000.0;
 const float NOMINAL_RESISTANCE = 100000.0;
@@ -75,12 +75,14 @@ uint64_t motorElapsedMs = 0;
 bool motor2Running = false;
 float rpm2 = 15.0; // Stepper 2 motor RPM, applied directly (no gear ratio)
 bool direction = HIGH;
-int currentStep = 0; // 0=idle, 1=Step 1, 2=Step 2, 3=Step 3
+int currentStep = 0; // Heating stage: 0=idle, 1=Step 1, 2=Step 2. Puller state is motorRunning.
 float step1Setpoint = 100.0;
 float step2Setpoint = 200.0;
 
 bool thermalFault = false;
 String faultReason = "";
+float faultTemp = 0;      // Reading and setpoint captured when the fault tripped
+float faultSetpoint = 0;
 
 float Kp = 19.0;
 float Ki = 0.45;
@@ -321,6 +323,8 @@ bool setHeaterEnabledLocked(bool on) {
 void tripThermalFaultLocked(const String& reason) {
   thermalFault = true;
   faultReason = reason;
+  faultTemp = currentTemp;
+  faultSetpoint = setpoint;
   setHeaterEnabledLocked(false);
   currentStep = 0;
   motor2Running = false;
@@ -391,8 +395,7 @@ void stopStep2() {
 
 void startStep3() {
   LOCK_STATE();
-  currentStep = 3;
-  motorRunning = true;
+  motorRunning = true; // Puller is independent: keep the active heating stage.
   updateStepperOutputLocked();
   UNLOCK_STATE();
 
@@ -402,9 +405,6 @@ void startStep3() {
 void stopStep3() {
   LOCK_STATE();
   motorRunning = false;
-  if (currentStep == 3) {
-    currentStep = heaterEnabled ? 2 : 0;
-  }
   updateStepperOutputLocked();
   UNLOCK_STATE();
 
@@ -779,11 +779,11 @@ String menuLabel(int idx) {
   switch (idx) {
     case 0: return String(step == 1 ? "Stop S1 " : "Start S1 ") + String(s1sp, 0) + "C";
     case 1: return String(step == 2 ? "Stop S2 " : "Start S2 ") + String(s2sp, 0) + "C";
-    case 2: return String(mot ? "Stop STEPPER" : "Start STEPPER");
+    case 2: return String(mot ? "Stop PULLER" : "Start PULLER");
     case 3: return "STOP ALL";
     case 4: return "IP:" + (WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "192.168.1.1");
     case 5: return "Wi-Fi Setup";
-    case 6: return String(mot2 ? "Stop STEPPER 2" : "Start STEPPER 2");
+    case 6: return String(mot2 ? "Stop CUTTER" : "Start CUTTER");
     default: return "";
   }
 }
@@ -796,6 +796,8 @@ void lcdShowStatus() {
   float sp = setpoint;
   bool mot = motorRunning;
   float r = rpm;
+  bool mot2 = motor2Running;
+  float r2 = rpm2;
   updateMotorRuntimeLocked(millis());
   uint64_t elapsedSeconds = motorElapsedMs / 1000;
   UNLOCK_STATE();
@@ -821,7 +823,7 @@ void lcdShowStatus() {
     (unsigned long long)(elapsedSeconds / 3600), (unsigned int)(elapsedSeconds / 60 % 60),
     (unsigned int)(elapsedSeconds % 60));
   lcdLine(0, "TEMP:" + String(temp, 1) + "/" + String(sp, 1) + "C");
-  lcdLine(1, "RPM:" + String(mot ? r : 0.0f, 1));
+  lcdLine(1, "PULL:" + String(mot ? r : 0.0f, 1) + " CUT:" + String(mot2 ? r2 : 0.0f, 1)); // RPM
   lcdLine(2, runtime);
   lcdLine(3, "WiFi: " + (connectedSSID.length() ?
     lcdNetworkName(connectedSSID, 14, true, wifiStatusScrollStart) : String("Not connected")));
@@ -1040,6 +1042,8 @@ String buildStatus() {
   float s2sp = step2Setpoint;
   bool fault = thermalFault;
   String fMsg = faultReason;
+  float fTemp = faultTemp;
+  float fSp = faultSetpoint;
   bool mot2 = motor2Running;
   float r2 = rpm2;
   UNLOCK_STATE();
@@ -1059,6 +1063,8 @@ String buildStatus() {
   json += "\"stable\":" + String((abs(sp - t) <= STABLE_BAND) ? "true" : "false") + ",";
   json += "\"fault\":" + String(fault ? "true" : "false") + ",";
   json += "\"faultMsg\":\"" + fMsg + "\",";
+  json += "\"faultTemp\":" + String(fTemp, 1) + ",";
+  json += "\"faultSP\":" + String(fSp, 1) + ",";
   json += "\"ip\":\"" + (WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "192.168.1.1") + "\",";
   json += "\"hostname\":\"" + String(mdns_hostname) + ".local\"";
   json += "}";
@@ -1129,10 +1135,10 @@ void handleSerial() {
     lcdForce();
   } else if (cmd == "s") {
     startStep3();
-    Serial.println("Motor started");
+    Serial.println("Puller started");
   } else if (cmd == "f") {
     stopStep3();
-    Serial.println("Motor stopped");
+    Serial.println("Puller stopped");
   } else if (cmd == "d") {
     LOCK_STATE();
     direction = !direction;
@@ -1153,10 +1159,10 @@ void handleSerial() {
     Serial.println("Step 2 stopped");
   } else if (cmd == "3") {
     startStep3();
-    Serial.println("Step 3 started");
+    Serial.println("Puller started");
   } else if (cmd == "!3") {
     stopStep3();
-    Serial.println("Step 3 stopped");
+    Serial.println("Puller stopped");
   } else if (cmd == "e") {
     Serial.print("CLK="); Serial.print(digitalRead(ENC_CLK_PIN));
     Serial.print(" DT="); Serial.print(digitalRead(ENC_DT_PIN));

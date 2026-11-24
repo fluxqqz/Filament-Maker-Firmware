@@ -61,7 +61,8 @@ describe('Dashboard Web UI & Polling Regression Suite', () => {
     const expected = {
       systemBadgeText: 'Awaiting device status',
       liveStatusText: 'Readings are unconfirmed until the device responds.', ipDisplay: 'Waiting for device address',
-      tempBig: '0.0', setpointBig: '0.0', pwmPct: '0', heaterTileVal: 'OFF', stepperTileVal: 'OFF', activeStageBadge: 'IDLE'
+      tempBig: '0.0', setpointBig: '0.0', pwmPct: '0', hotendPill: 'OFF', pullerPill: 'OFF', cutterPill: 'OFF',
+      cutterToggleBtn: 'Start Cutter', step3ToggleBtn: 'Start Puller'
     };
     for (const [k, v] of Object.entries(expected)) assert.equal(els[k].innerText, v);
     for (const k of ['systemBadge', 'sysBadgeDot']) assert.match(els[k].className, /\bpending\b/);
@@ -86,32 +87,51 @@ describe('Dashboard Web UI & Polling Regression Suite', () => {
     }
     const expected = {
       tempBig: '215.3', setpointBig: '210.0', pwmPct: '50', pwmRaw: '128', rpmVal: '15.0',
-      targetRpmText: '15.0', thermalStateText: 'Stable at Setpoint', ipDisplay: '192.168.1.100 (filament-maker-test.local)',
-      heaterTileVal: 'ON', stepperTileVal: 'RUNNING', activeStageBadge: 'STEP 1 ACTIVE', step1Pill: 'STABLE', step1ToggleBtn: 'Stop Stage 1'
+      ipDisplay: '192.168.1.100 (filament-maker-test.local)', hotendPill: 'STABLE', pullerPill: 'RUNNING',
+      step3ToggleBtn: 'Stop Puller', pullerHint: 'Hot end at temperature.', cutterPill: 'OFF', cutterRpmVal: '0.0',
+      cutterToggleBtn: 'Start Cutter', step1Pill: 'STABLE', step1ToggleBtn: 'Stop Stage 1', step2ToggleBtn: 'Start Stage 2'
     };
     for (const [k, v] of Object.entries(expected)) assert.equal(env.els[k].innerText, v);
+    for (const [k, v] of Object.entries({ hotendCard: 'station active', pullerCard: 'station active', cutterCard: 'station', step1Card: 'stage-row active', step2Card: 'stage-row' })) {
+      assert.equal(env.els[k].className, v, k);
+    }
   });
 
-  it('Stage 1 Stage 2 motor/manual handlers endpoints unchanged', async () => {
+  it('puller hint warns only while pulling below temperature; cutter shows its own speed', async () => {
+    let cur = { ...STATUS, stable: false, stepper: true, stepper2: true, rpm2: 7.5 };
+    const env = setupEnv(url => url === '/status' && Promise.resolve({ ok: true, json: async () => cur }));
+    await env.flush();
+    assert.equal(env.els.pullerHint.className, 'hint warn');
+    assert.equal(env.els.hotendPill.innerText, 'HEATING');
+    assert.equal(env.els.cutterRpmVal.innerText, '7.5');
+    assert.equal(env.els.cutterPill.innerText, 'RUNNING');
+    assert.equal(env.els.cutterToggleBtn.innerText, 'Stop Cutter');
+    cur = { ...cur, heater: false, stepper: false };
+    env.poll();
+    await env.flush();
+    assert.equal(env.els.pullerHint.className, 'hint');
+    assert.equal(env.els.hotendPill.innerText, 'OFF');
+  });
+
+  it('stage, puller and cutter handlers hit the firmware endpoints', async () => {
     let curStatus = { ...STATUS, step: 1, heater: true, stepper: true };
     const env = setupEnv(url => url === '/status' ? Promise.resolve({ ok: true, json: async () => curStatus }) : Promise.resolve({ ok: true }));
     await env.flush();
     const testCall = (action, expectedUrl) => { env.calls.length = 0; action(); assert.equal(env.calls[0]?.url, expectedUrl); };
 
     for (const [fn, url] of [
-      [() => env.ctx.heaterOn(), '/heater?state=on'], [() => env.ctx.heaterOff(), '/heater?state=off'],
-      [() => env.ctx.stepperOn(), '/stepper?state=on'], [() => env.ctx.stepperOff(), '/stepper?state=off'],
-      [() => env.ctx.stepper2On(), '/stepper2?state=on'], [() => env.ctx.stepper2Off(), '/stepper2?state=off'],
+      [() => env.ctx.toggleCutter(), '/stepper2?state=on'],
       [() => env.ctx.toggleStep1(), '/step1?state=off'], [() => env.ctx.toggleStep2(), '/step2?state=on'],
       [() => env.ctx.toggleStep3(), '/step3?state=off']
     ]) testCall(fn, url);
 
-    curStatus = { ...STATUS, step: 2, heater: true, stepper: false };
+    curStatus = { ...STATUS, step: 2, heater: true, stepper: false, stepper2: true };
     env.poll();
     await env.flush();
     testCall(() => env.ctx.toggleStep1(), '/step1?state=on');
     testCall(() => env.ctx.toggleStep2(), '/step2?state=off');
     testCall(() => env.ctx.toggleStep3(), '/step3?state=on');
+    testCall(() => env.ctx.toggleCutter(), '/stepper2?state=off');
 
     env.els.step1SPInput.value = '165'; testCall(() => env.ctx.setStep1SP(env.els.step1ApplyBtn), '/step1setpoint?value=165');
     env.els.step2SPInput.value = '215'; testCall(() => env.ctx.setStep2SP(env.els.step2ApplyBtn), '/step2setpoint?value=215');
@@ -127,6 +147,14 @@ describe('Dashboard Web UI & Polling Regression Suite', () => {
     await env.flush();
     assert.equal(env.els.faultBanner.style.display, 'flex');
     assert.equal(env.els.faultText.innerText, 'OVERTEMP HAZARD');
+    assert.match(env.els.faultCause.innerText, /280/);
+
+    const withNum = setupEnv(url => url === '/status' ? Promise.resolve({ ok: true, json: async () => ({ ...STATUS, fault: true, faultMsg: 'OVERTEMP RUNAWAY', faultTemp: 226.2, faultSP: 210 }) }) : undefined);
+    await withNum.flush();
+    assert.equal(withNum.els.faultText.innerText, 'OVERTEMP RUNAWAY at 226.2°C (setpoint 210.0°C)');
+    const noSensor = setupEnv(url => url === '/status' ? Promise.resolve({ ok: true, json: async () => ({ ...STATUS, fault: true, faultMsg: 'SENSOR DISCONNECTED', faultTemp: -100, faultSP: 210 }) }) : undefined);
+    await noSensor.flush();
+    assert.equal(noSensor.els.faultText.innerText, 'SENSOR DISCONNECTED (no sensor reading)');
     assert.equal(env.els.systemBadgeText.innerText, 'SAFETY FAULT');
 
     env.poll();

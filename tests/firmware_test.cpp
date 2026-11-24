@@ -42,7 +42,7 @@ void testRuntimeAndStatus() {
   assert(motorElapsedMs == 13345);
   fakeMillis += 10000;
   lcdShowStatus();
-  assertLcdRow(1, "RPM:0.0");
+  assertLcdRow(1, "PULL:0.0 CUT:0.0");
   assert(lcd.rows[2].find("RUNTIME 00:00:13") == 0);
   assertLcdRow(3, "WiFi: Not connected");
   startStep3();
@@ -53,7 +53,7 @@ void testRuntimeAndStatus() {
   lcd.rows[2].assign(20, 'X'); // Reordered rows must overwrite the previous layout.
   lcdShowStatus();
   assert(lcd.rows[0].find("TEMP:215.3/220.0C") == 0);
-  assertLcdRow(1, "RPM:15.0");
+  assertLcdRow(1, "PULL:15.0 CUT:0.0");
   assert(lcd.rows[2].find("RUNTIME 00:12:34") == 0);
   assertLcdRow(3, "WiFi: Not connected");
   stopAll();
@@ -126,7 +126,7 @@ void testControlMenuScrollingAndActions() {
   stopAll();
   onButtonShort();
   assert(uiMode == UI_MENU && MENU_COUNT == 7 && menuIndex == 0 && menuTop == 0);
-  const char* labels[] = {"Start S1 100C", "Start S2 200C", "Start STEPPER", "STOP ALL", "IP:192.168.1.1", "Wi-Fi Setup", "Start STEPPER 2"};
+  const char* labels[] = {"Start S1 100C", "Start S2 200C", "Start PULLER", "STOP ALL", "IP:192.168.1.1", "Wi-Fi Setup", "Start CUTTER"};
   for (int i = 0; i < MENU_COUNT; ++i) assert(menuLabel(i) == labels[i]);
   int clears = lcd.clearCount;
   lcdRefresh(true);
@@ -139,7 +139,7 @@ void testControlMenuScrollingAndActions() {
     assert(lcd.rows[i - menuTop][0] == '>');
   }
   assertLcdRow(0, " STOP ALL");
-  assertLcdRow(3, ">Start STEPPER 2");
+  assertLcdRow(3, ">Start CUTTER");
   onEncoderTurn(1); lcdRefresh(true);
   assert(menuIndex == 6 && menuTop == 3);
   const int upTop[] = {0, 1, 2, 3, 3, 3, 3};
@@ -160,9 +160,15 @@ void testControlMenuScrollingAndActions() {
   onButtonShort();
   assert(!heaterEnabled);
   onEncoderTurn(1); onButtonShort();
-  assert(motorRunning && menuLabel(2) == "Stop STEPPER");
+  assert(motorRunning && menuLabel(2) == "Stop PULLER");
   onButtonShort();
   assert(!motorRunning);
+  // Puller start/stop must not change which heating stage is active.
+  startStep1(); startStep3();
+  assert(currentStep == 1 && heaterEnabled && menuLabel(0) == "Stop S1 100C");
+  stopStep3();
+  assert(currentStep == 1 && heaterEnabled && setpoint == step1Setpoint);
+  stopStep1();
   onButtonShort(); startStep1();
   onEncoderTurn(1); onButtonShort();
   assert(uiMode == UI_STATUS && !heaterEnabled && !motorRunning);
@@ -198,7 +204,7 @@ void testControlMenuTimeout() {
   ++fakeMillis;
   lcdRefresh(false); // Must expire even inside the normal 250ms render throttle.
   assert(uiMode == UI_STATUS && heaterEnabled && motorRunning);
-  assertLcdRow(1, "RPM:15.0");
+  assertLcdRow(1, "PULL:15.0 CUT:0.0");
   stopAll();
 
   fakeMillis = 0xfffffff0u;
@@ -413,10 +419,12 @@ void testFaultPriorityAndStops() {
 void testStepper2Controls() {
   resetWifi();
   stopAll();
-  assert(!motor2Running && toneValues[STEP2_PIN] == 0 && menuLabel(6) == "Start STEPPER 2");
+  assert(!motor2Running && toneValues[STEP2_PIN] == 0 && menuLabel(6) == "Start CUTTER");
   server.arguments["state"] = "on";
   server.routes.at("/stepper2")();
-  assert(motor2Running && toneValues[STEP2_PIN] == 800 && menuLabel(6) == "Stop STEPPER 2"); // 15 RPM * 3200 / 60
+  assert(motor2Running && toneValues[STEP2_PIN] == 800 && menuLabel(6) == "Stop CUTTER"); // 15 RPM * 3200 / 60
+  lcdRefresh(true);
+  assertLcdRow(1, "PULL:0.0 CUT:15.0");
   assert(!motorRunning); // stepper 1 untouched
   server.arguments["value"] = "60";
   server.routes.at("/rpm2")();
@@ -431,8 +439,10 @@ void testStepper2Controls() {
   server.routes.at("/stopall")();
   assert(!motor2Running && toneValues[STEP2_PIN] == 0);
   startStepper2();
+  currentTemp = 236.4f; setpoint = 210.0f;
   LOCK_STATE(); tripThermalFaultLocked("TEST TRIP"); UNLOCK_STATE();
   assert(thermalFault && !motor2Running && toneValues[STEP2_PIN] == 0);
+  assert(std::string(buildStatus().c_str()).find("\"faultTemp\":236.4,\"faultSP\":210.0,") != std::string::npos);
   thermalFault = false;
 }
 

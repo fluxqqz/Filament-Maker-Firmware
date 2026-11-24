@@ -4,7 +4,7 @@
 #include <Arduino.h>
 
 // Web dashboard HTML / CSS / JS served to clients at "/"
-// Design: Mountoya UPCYCLE Controller UI (Figma matching + UX & Safety Upgrades)
+// Layout follows the material path: Cutter (stepper 2) -> Hot end (stages 1/2) -> Puller (stepper 1).
 const char webpage[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html lang="en">
@@ -22,17 +22,16 @@ const char webpage[] PROGMEM = R"rawliteral(
   --bg-card: #FFFFFF;
   --border-card: #E5E7EB;
   --text-main: #212121;
-  --text-muted: #7A828A;
+  --text-muted: #6B737B;
   --green: #297D47;
   --green-bg: #E0F2E3;
   --red: #C62828;
   --red-bg: #FFEBEE;
-  --orange: #E07A14;
+  --orange: #B35F0C;
   --orange-bg: #FFF5E5;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html { scroll-behavior: smooth; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   background: var(--bg-page);
@@ -40,129 +39,93 @@ body {
   min-height: 100vh;
 }
 
-/* COMPACT DEVICE HEADER */
+/* STICKY TOP BAR: Stop All is always reachable */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg-page);
+  border-bottom: 1px solid var(--border-card);
+}
+.topbar-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 12px 40px;
+  display: flex;
+  align-items: center;
+  gap: 8px 16px;
+  flex-wrap: wrap;
+}
 .brand-title {
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 800;
   letter-spacing: 1.5px;
   color: var(--navy-dark);
-  margin-bottom: 8px;
 }
 .device-status {
+  display: flex;
+  align-items: center;
+  gap: 4px 12px;
+  flex-wrap: wrap;
   min-width: 0;
-  max-width: 320px;
 }
 .network-details {
-  margin-top: 8px;
   font-size: 12px;
-  line-height: 1.5;
   color: var(--navy-muted);
   overflow-wrap: anywhere;
 }
+.live-indicator {
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.stop-status:not(:empty) { margin-left: 8px; font-weight: 700; color: var(--text-main); }
+.stop-status.warn { color: var(--red); }
 .status-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--green);
-  box-shadow: 0 0 6px rgba(41, 125, 71, 0.8);
-  transition: background 0.2s ease, box-shadow 0.2s ease;
   flex-shrink: 0;
 }
-.status-dot.pending {
-  background: var(--navy-muted);
-  box-shadow: none;
-}
-.status-dot.offline {
-  background: var(--red);
-  box-shadow: 0 0 6px rgba(198, 40, 40, 0.8);
-}
-
-/* MAIN CONTENT */
-.main-wrapper {
-  width: 100%;
-  min-width: 0;
-  padding: 32px 40px;
-  max-width: 1200px;
-  margin: 0 auto;
-}
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
-  margin-bottom: 6px;
-}
-.page-title {
-  font-size: 30px;
+.status-dot.pending { background: var(--navy-muted); }
+.status-dot.offline { background: var(--red); }
+.badge-online, .badge-fault {
+  font-size: 11px;
   font-weight: 700;
-  color: var(--text-main);
-}
-.page-subtitle {
-  font-size: 15px;
-  color: var(--text-muted);
-  margin-top: 4px;
-}
-.header-actions {
-  display: flex;
+  letter-spacing: 0.5px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  display: inline-flex;
   align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  gap: 6px;
+  background: var(--green-bg);
+  color: var(--green);
 }
+.badge-fault { background: var(--red-bg); color: var(--red); }
+.badge-pending { background: var(--navy-faint); color: var(--navy-muted); }
 .btn-estop {
+  margin-left: auto;
   background: var(--red);
   color: #fff;
   border: none;
-  border-radius: 6px;
-  padding: 7px 14px;
-  font-size: 11px;
+  border-radius: 8px;
+  padding: 0 22px;
+  font-size: 14px;
   font-weight: 800;
   letter-spacing: 0.6px;
   cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  box-shadow: 0 2px 6px rgba(198, 40, 40, 0.25);
-  transition: background 0.15s ease, transform 0.1s ease;
+  box-shadow: 0 2px 6px rgba(198, 40, 40, 0.3);
 }
-.btn-estop:hover {
-  background: #B71C1C;
+.btn-estop:hover { background: #B71C1C; }
+.btn-estop:active { transform: scale(0.97); }
+
+/* MAIN CONTENT */
+.main-wrapper {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px 40px 32px;
 }
-.btn-estop:active {
-  transform: scale(0.97);
-}
-.badge-online {
-  background: var(--green-bg);
-  color: var(--green);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  padding: 7px 12px;
-  border-radius: 6px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.badge-fault {
-  background: var(--red-bg);
-  color: var(--red);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  padding: 7px 12px;
-  border-radius: 6px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.live-indicator {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-muted);
-  letter-spacing: 0.5px;
-  margin-bottom: 24px;
-}
-.live-indicator p { margin-top: 8px; }
 
 /* FAULT ALERT BANNER */
 .fault-banner {
@@ -170,49 +133,83 @@ body {
   color: #fff;
   border-radius: 10px;
   padding: 16px 20px;
-  margin-bottom: 24px;
+  margin-bottom: 20px;
   display: none;
   align-items: center;
   justify-content: space-between;
-  box-shadow: 0 4px 14px rgba(183, 28, 28, 0.3);
+  gap: 12px;
 }
-.fault-title {
-  font-size: 15px;
-  font-weight: 700;
-}
-.fault-desc {
-  font-size: 12px;
-  color: #FFCDD2;
-  margin-top: 2px;
-}
+.fault-title { font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
+.fault-desc { font-size: 12px; color: #FFCDD2; margin-top: 2px; }
 .btn-fault-reset {
   background: #fff;
   color: #B71C1C;
   font-size: 13px;
   font-weight: 700;
-  padding: 8px 16px;
+  padding: 0 16px;
   border-radius: 6px;
   border: none;
   cursor: pointer;
+  flex-shrink: 0;
 }
 
-/* TEMPERATURE OVERVIEW CARD */
-.overview-card {
+/* STATIONS: one card per machine station, in material order */
+.stations {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+  margin-bottom: 20px;
+}
+.station {
   background: var(--bg-card);
   border: 1px solid var(--border-card);
   border-radius: 12px;
-  padding: 24px 28px;
-  margin-bottom: 32px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-  display: grid;
-  grid-template-columns: minmax(0, 1.1fr) 1px minmax(0, 0.8fr) minmax(0, 1.4fr);
-  gap: 28px;
-  align-items: center;
+  padding: 22px;
+  min-width: 0;
 }
-.temp-col {
+.station.active {
+  border-color: var(--green);
+  box-shadow: 0 0 0 2px var(--green-bg);
+}
+.station-head {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
 }
+.step-num-box {
+  width: 30px;
+  height: 30px;
+  background: var(--navy-faint);
+  color: var(--navy-dark);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.station.active .step-num-box { background: var(--navy-dark); color: #fff; }
+.station-title { font-size: 18px; font-weight: 700; flex: 1; }
+.station-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  margin-bottom: 16px;
+}
+.step-pill {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: #F0F0F0;
+  color: #616161;
+  flex-shrink: 0;
+}
+.step-pill.active { background: var(--green-bg); color: var(--green); }
+
 .label-sub {
   font-size: 11px;
   font-weight: 700;
@@ -222,404 +219,90 @@ body {
   margin-bottom: 6px;
   display: block;
 }
-.temp-value-row {
-  display: flex;
-  align-items: baseline;
-  gap: 4px;
-}
-.temp-large {
-  font-size: 60px;
-  font-weight: 800;
-  color: var(--navy-dark);
-  line-height: 1;
-}
-.temp-unit {
-  font-size: 26px;
-  font-weight: 600;
-  color: var(--navy-dark);
-}
-.setpoint-row {
-  margin-top: 12px;
-  font-size: 13px;
-  color: var(--text-muted);
-}
-.setpoint-val {
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--text-main);
-  margin-left: 4px;
-}
-.card-divider {
-  width: 1px;
-  height: 100%;
-  background: var(--border-card);
-}
-.pwm-col {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  padding: 0 8px;
-}
-.pwm-val {
-  font-size: 32px;
-  font-weight: 700;
-  color: var(--text-main);
-  margin-bottom: 10px;
-}
+.readout { display: flex; align-items: baseline; gap: 4px; margin-bottom: 16px; }
+.readout-val { font-size: 40px; font-weight: 800; color: var(--navy-dark); line-height: 1; }
+.readout-unit { font-size: 16px; font-weight: 600; color: var(--navy-dark); }
+.temp-large { font-size: 52px; }
+.readout-target { font-size: 14px; color: var(--text-muted); margin-left: 8px; }
+.readout-target b { color: var(--text-main); font-size: 16px; }
+
 .progress-track {
-  width: 100%;
-  height: 10px;
+  height: 8px;
   background: var(--navy-faint);
-  border-radius: 5px;
+  border-radius: 4px;
   overflow: hidden;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
-.progress-fill {
-  height: 100%;
-  width: 0%;
-  background: var(--navy-dark);
-  border-radius: 5px;
-  transition: width 0.3s ease;
-}
-.pwm-desc {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-.tiles-col {
-  display: flex;
-  gap: 14px;
-}
-.status-tile {
-  flex: 1;
-  background: #F4F7F4;
-  border-radius: 10px;
-  padding: 16px 14px;
-  display: flex;
-  flex-direction: column;
-  transition: all 0.2s ease;
-}
-.status-tile.off {
-  background: #F5F5F5;
-}
-.tile-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-.tile-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--green);
-}
-.status-tile.off .tile-dot {
-  background: #9E9E9E;
-}
-.tile-title {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.8px;
-  color: var(--text-muted);
-}
-.tile-value {
-  font-size: 22px;
-  font-weight: 800;
-  color: var(--green);
-  margin-bottom: 4px;
-}
-.status-tile.off .tile-value {
-  color: #757575;
-}
-.tile-desc {
-  font-size: 11px;
-  color: var(--text-muted);
-}
+.progress-fill { height: 100%; width: 0%; background: var(--navy-dark); transition: width 0.3s ease; }
+.pwm-desc { font-size: 12px; color: var(--text-muted); }
 
-/* SECTION HEADERS */
-.section-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  margin-bottom: 16px;
-}
-.section-title {
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--text-main);
-}
-.section-subtitle {
-  font-size: 13px;
-  color: var(--text-muted);
-  margin-top: 2px;
-}
-.stage-badge {
-  background: var(--green-bg);
-  color: var(--green);
-  font-size: 11px;
-  font-weight: 700;
-  padding: 6px 12px;
-  border-radius: 6px;
-}
-.stage-badge.idle {
-  background: #EFEFEF;
-  color: #757575;
-}
-.stage-badge.manual {
-  background: var(--orange-bg);
-  color: var(--orange);
-}
-
-/* PROCESS CARDS GRID */
-.process-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 20px;
-  margin-bottom: 32px;
-}
-.step-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-card);
-  border-radius: 12px;
-  padding: 22px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-  display: flex;
-  flex-direction: column;
-  position: relative;
-  transition: all 0.2s ease;
-}
-.step-card.active {
-  border-color: var(--green);
-  box-shadow: 0 0 0 2px var(--green-bg);
-}
-.step-top {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 14px;
-}
-.step-num-box {
-  width: 36px;
-  height: 36px;
-  background: var(--navy-dark);
-  color: #fff;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  font-weight: 700;
-}
-.step-card:not(.active) .step-num-box {
-  background: var(--navy-faint);
-  color: var(--navy-dark);
-}
-.step-pill {
-  font-size: 11px;
-  font-weight: 700;
-  padding: 4px 10px;
-  border-radius: 6px;
-  background: #F0F0F0;
-  color: #757575;
-}
-.step-pill.active {
-  background: var(--green-bg);
-  color: var(--green);
-}
-.step-title {
-  font-size: 17px;
-  font-weight: 700;
-  color: var(--text-main);
-  margin-bottom: 4px;
-}
-.step-desc {
+.hint {
   font-size: 12px;
-  color: var(--text-muted);
   line-height: 1.4;
-  margin-bottom: 16px;
-  min-height: 34px;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+  min-height: 17px;
 }
-.input-row {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 12px;
+.hint.ok { color: var(--green); font-weight: 600; }
+.hint.warn {
+  color: var(--orange);
+  background: var(--orange-bg);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-weight: 600;
 }
+
+/* Heating stages inside the hot end card */
+.stage-row { border-top: 1px solid #EEE; margin-top: 18px; padding-top: 16px; }
+.stage-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.stage-name { font-size: 15px; font-weight: 700; }
+.stage-row.active .stage-name { color: var(--green); }
+
+.input-row { display: flex; gap: 8px; margin-bottom: 10px; }
 .text-input {
   flex: 1;
   min-width: 0;
   background: #F9FAFB;
   border: 1px solid var(--border-card);
   border-radius: 6px;
-  padding: 8px 12px;
-  font-size: 14px;
+  padding: 0 12px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--text-main);
   outline: none;
-  transition: border-color 0.15s ease;
 }
-.text-input:focus {
-  border-color: var(--navy-dark);
-  background: #fff;
-}
+.text-input:focus { border-color: var(--navy-dark); background: #fff; }
 .btn-apply {
   background: var(--navy-dark);
   color: #fff;
   border: none;
   border-radius: 6px;
-  padding: 8px 14px;
-  min-width: 72px;
-  font-size: 12px;
+  padding: 0 14px;
+  min-width: 76px;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.15s ease;
 }
-.btn-apply:hover {
-  background: var(--navy-hover);
-}
-.btn-apply.saved {
-  background: var(--green);
-  color: #fff;
-}
-.btn-apply.error {
-  background: var(--red);
-  color: #fff;
-}
+.btn-apply:hover { background: var(--navy-hover); }
+.btn-apply.saved { background: var(--green); }
+.btn-apply.error { background: var(--red); }
 .btn-step-toggle {
   width: 100%;
   background: var(--navy-dark);
   color: #fff;
   border: 1px solid transparent;
   border-radius: 6px;
-  padding: 11px 0;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  margin-top: auto;
-  transition: all 0.15s ease;
-}
-.btn-step-toggle:hover {
-  background: var(--navy-hover);
-}
-.btn-step-toggle.active {
-  background: #FFF0F0;
-  color: #C62828;
-  border: 1px solid rgba(198, 40, 40, 0.35);
-}
-.btn-step-toggle.active:hover {
-  background: #FFEBEE;
-}
-
-/* LOWER GRID */
-.lower-grid {
-  display: grid;
-  grid-template-columns: 1.4fr 1fr;
-  gap: 20px;
-  margin-bottom: 28px;
-}
-.panel {
-  background: var(--bg-card);
-  border: 1px solid var(--border-card);
-  border-radius: 12px;
-  padding: 24px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-  display: flex;
-  flex-direction: column;
-}
-.panel-title {
-  font-size: 17px;
-  font-weight: 700;
-  color: var(--text-main);
-  margin-bottom: 4px;
-}
-.panel-desc {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-bottom: 18px;
-}
-.ctrl-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 0;
-}
-.ctrl-row:not(:last-child) {
-  border-bottom: 1px solid #F0F0F0;
-}
-.ctrl-info {
-  display: flex;
-  flex-direction: column;
-}
-.ctrl-title {
   font-size: 14px;
   font-weight: 700;
-  color: var(--text-main);
-}
-.ctrl-helper {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-.btn-group {
-  display: flex;
-  gap: 8px;
-}
-.btn-ctrl {
-  background: #F0F0F0;
-  color: var(--text-main);
-  border: 1px solid var(--border-card);
-  border-radius: 6px;
-  padding: 8px 14px;
-  font-size: 12px;
-  font-weight: 700;
   cursor: pointer;
-  transition: all 0.15s ease;
 }
-.btn-ctrl:hover {
-  background: #E5E7EB;
+.btn-step-toggle:hover { background: var(--navy-hover); }
+.btn-step-toggle.active {
+  background: #FFF0F0;
+  color: var(--red);
+  border-color: rgba(198, 40, 40, 0.35);
 }
-.btn-ctrl.active-on {
-  background: var(--green);
-  color: #fff;
-  border-color: var(--green);
-}
-.btn-ctrl.active-off {
-  background: var(--navy-dark);
-  color: #fff;
-  border-color: var(--navy-dark);
-}
-.rpm-display-box {
-  margin-top: auto;
-  padding: 14px 16px;
-  background: var(--navy-faint);
-  border-radius: 8px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.rpm-display-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--navy-dark);
-}
-.rpm-display-val {
-  font-size: 20px;
-  font-weight: 800;
-  color: var(--navy-dark);
-}
-.telemetry-row {
-  display: flex;
-  justify-content: space-between;
-  font-size: 13px;
-  padding: 8px 0;
-  border-bottom: 1px solid #F0F0F0;
-  margin-bottom: 12px;
-}
-.telemetry-label {
-  color: var(--text-muted);
-}
-.telemetry-val {
-  font-weight: 700;
-  color: var(--text-main);
-}
+.btn-step-toggle.active:hover { background: var(--red-bg); }
 
 /* SAFETY FOOTER NOTICE */
 .safety-notice {
@@ -627,76 +310,32 @@ body {
   border: 1px solid rgba(224, 122, 20, 0.2);
   border-radius: 8px;
   padding: 12px 16px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
   font-size: 12px;
-  color: var(--text-main);
   font-weight: 500;
-}
-.safety-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--orange);
-  flex-shrink: 0;
 }
 
 /* INPUT AND KEYBOARD ACCESSIBILITY */
-button, input { min-height: 44px; }
-button, input { font-family: inherit; }
-button { touch-action: manipulation; }
-button:focus-visible, input:focus-visible {
-  outline: 3px solid var(--navy-dark);
-  outline-offset: 3px;
-}
-.text-input { font-size: 16px; }
-.badge-pending {
-  background: var(--navy-faint);
-  color: var(--navy-muted);
-}
-.overview-card > *, .status-tile, .step-card, .panel { min-width: 0; }
-.fault-banner, .section-header, .ctrl-row, .telemetry-row, .rpm-display-box { gap: 12px; }
-.fault-title { overflow-wrap: anywhere; }
-.btn-fault-reset, .stage-badge { flex-shrink: 0; }
-.btn-group { flex-shrink: 0; }
+button, input { min-height: 44px; font-family: inherit; }
+button { touch-action: manipulation; transition: background 0.15s ease; }
+button:focus-visible, input:focus-visible { outline: 3px solid var(--navy-dark); outline-offset: 3px; }
 
-/* RESPONSIVE DESIGN */
-@media (max-width: 1100px) {
-  .overview-card {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 24px;
-  }
-  .card-divider { display: none; }
-  .tiles-col { grid-column: 1 / -1; }
-}
+/* RESPONSIVE: stack stations in material order */
 @media (max-width: 960px) {
-  .main-wrapper { padding: 24px; }
-  .page-header { flex-direction: column; gap: 20px; }
-  .header-actions { width: 100%; justify-content: flex-start; }
-  .device-status { max-width: 100%; }
-  .process-grid, .lower-grid { grid-template-columns: 1fr; }
+  .topbar-inner { padding: 10px 16px; }
+  .main-wrapper { padding: 16px 16px 24px; }
+  .stations { grid-template-columns: minmax(0, 1fr); gap: 16px; }
 }
 @media (max-width: 600px) {
-  .main-wrapper { padding: 20px 16px; }
-  .page-title { font-size: 26px; }
-  .page-subtitle { font-size: 14px; }
-  .header-actions { gap: 12px; }
-  .device-status { flex: 1 1 160px; }
-  .btn-estop { margin-left: auto; }
-  .overview-card { grid-template-columns: minmax(0, 1fr); padding: 20px; gap: 20px; }
-  .pwm-col { padding: 0; }
-  .tiles-col { gap: 10px; }
-  .status-tile { padding: 14px 10px; }
-  .tile-value { font-size: 20px; }
-  .fault-banner, .section-header, .ctrl-row { align-items: flex-start; flex-direction: column; }
-  .btn-group { width: 100%; }
-  .btn-ctrl { flex: 1; }
-  .step-card, .panel { padding: 20px; }
-  .telemetry-row, .rpm-display-box { flex-wrap: wrap; }
+  .network-details { display: none; }
+  .topbar-inner { gap: 6px 8px; }
+  .brand-title { font-size: 14px; letter-spacing: 1px; }
+  .badge-online, .badge-fault { padding: 6px 8px; }
+  .btn-estop { padding: 0 12px; letter-spacing: 0.3px; }
+  .station { padding: 18px; }
+  .temp-large { font-size: 44px; }
+  .fault-banner { flex-direction: column; align-items: flex-start; }
 }
 @media (prefers-reduced-motion: reduce) {
-  html { scroll-behavior: auto; }
   *, *::before, *::after { transition: none !important; }
 }
 </style>
@@ -704,239 +343,123 @@ button:focus-visible, input:focus-visible {
 
 <body>
 
-<!-- MAIN CONTENT -->
-<main class="main-wrapper">
-
-  <!-- PAGE HEADER -->
-  <div class="page-header" id="overview">
-    <div>
-      <div class="brand-title">MOUNTOYA</div>
-      <h1 class="page-title">Controller overview</h1>
-      <p class="page-subtitle">Monitor temperature, manage process steps, and control output.</p>
-    </div>
-    <div class="header-actions">
-      <div class="device-status">
-        <div id="systemBadge" class="badge-online badge-pending" role="status">
-          <span class="status-dot pending" id="sysBadgeDot" aria-hidden="true"></span>
-          <span id="systemBadgeText">Awaiting device status</span>
-        </div>
-        <p class="network-details" id="ipDisplay">Waiting for device address</p>
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand-title">MOUNTOYA</div>
+    <div class="device-status">
+      <div id="systemBadge" class="badge-online badge-pending" role="status">
+        <span class="status-dot pending" id="sysBadgeDot" aria-hidden="true"></span>
+        <span id="systemBadgeText">Awaiting device status</span>
       </div>
-      <button class="btn-estop" id="estopBtn" onclick="stopAll()" title="Immediately stop heater and stepper motor">
-        &#9632; STOP ALL
-      </button>
+      <p class="network-details" id="ipDisplay">Waiting for device address</p>
     </div>
+    <button class="btn-estop" id="estopBtn" onclick="stopAll()" title="Immediately stop heater, cutter and puller">&#9632; STOP ALL</button>
+    <p class="live-indicator"><span id="liveStatusText">Readings are unconfirmed until the device responds.</span><span class="stop-status" id="stopStatusText" role="status"></span></p>
   </div>
-  <div class="live-indicator">
-    <p id="liveStatusText">Readings are unconfirmed until the device responds.</p>
-    <p id="stopStatusText" role="status"></p>
-  </div>
+</header>
+
+<main class="main-wrapper">
 
   <!-- FAULT ALERT BANNER -->
   <div id="faultBanner" class="fault-banner">
     <div>
       <div class="fault-title">SAFETY FAULT: <span id="faultText">FAULT</span></div>
-      <div class="fault-desc">Heater shut down. Check thermistor/wiring before resetting.</div>
+      <div class="fault-desc" id="faultCause">Heater shut down. Check thermistor/wiring before resetting.</div>
     </div>
     <button class="btn-fault-reset" onclick="resetFault()">Reset Fault</button>
   </div>
 
-  <!-- TEMPERATURE OVERVIEW CARD -->
-  <section class="overview-card">
-    <div class="temp-col">
-      <span class="label-sub">CURRENT TEMPERATURE</span>
-      <div class="temp-value-row">
-        <span class="temp-large" id="tempBig">0.0</span>
-        <span class="temp-unit">&deg;C</span>
-      </div>
-      <div class="setpoint-row">
-        Target Setpoint: <span class="setpoint-val" id="setpointBig">0.0</span>&deg;C
-      </div>
-    </div>
+  <div class="stations">
 
-    <div class="card-divider"></div>
-
-    <div class="pwm-col">
-      <span class="label-sub">HEATER OUTPUT</span>
-      <div class="pwm-val"><span id="pwmPct">0</span>%</div>
-      <div class="progress-track">
-        <div class="progress-fill" id="pwmFill"></div>
+    <!-- 1 CUTTER (stepper 2) -->
+    <section class="station" id="cutterCard" aria-labelledby="cutterTitle">
+      <div class="station-head">
+        <span class="step-num-box">1</span>
+        <h2 class="station-title" id="cutterTitle">Cutter</h2>
+        <span class="step-pill" id="cutterPill">OFF</span>
       </div>
-      <span class="pwm-desc">Power modulation (PWM: <span id="pwmRaw">0</span>)</span>
-    </div>
+      <p class="station-desc">Cuts the bottle into strip.</p>
 
-    <div class="tiles-col">
-      <div class="status-tile off" id="heaterTile">
-        <div class="tile-head">
-          <span class="tile-dot"></span>
-          <span class="tile-title">HEATER</span>
-        </div>
-        <span class="tile-value" id="heaterTileVal">OFF</span>
-        <span class="tile-desc">Temperature control</span>
+      <span class="label-sub">Motor speed</span>
+      <div class="readout"><span class="readout-val" id="cutterRpmVal">0.0</span><span class="readout-unit">RPM</span></div>
+
+      <label class="label-sub" for="rpm2Input">Target (0.1&ndash;60 RPM)</label>
+      <div class="input-row">
+        <input type="number" min="0.1" max="60" step="0.1" class="text-input" id="rpm2Input" oninput="markInputEdited(this)">
+        <button class="btn-apply" id="rpm2ApplyBtn" onclick="setRPM2(this)">Apply</button>
       </div>
+      <button class="btn-step-toggle" id="cutterToggleBtn" onclick="toggleCutter()">Start Cutter</button>
+    </section>
 
-      <div class="status-tile off" id="stepperTile">
-        <div class="tile-head">
-          <span class="tile-dot"></span>
-          <span class="tile-title">STEPPER</span>
-        </div>
-        <span class="tile-value" id="stepperTileVal">OFF</span>
-        <span class="tile-desc">Output wheel drive</span>
+    <!-- 2 HOT END (heater, stages 1 and 2) -->
+    <section class="station" id="hotendCard" aria-labelledby="hotendTitle">
+      <div class="station-head">
+        <span class="step-num-box">2</span>
+        <h2 class="station-title" id="hotendTitle">Hot end</h2>
+        <span class="step-pill" id="hotendPill">OFF</span>
       </div>
+      <p class="station-desc">Heats the strip through two heating stages.</p>
 
-      <div class="status-tile off" id="stepper2Tile">
-        <div class="tile-head">
-          <span class="tile-dot"></span>
-          <span class="tile-title">STEPPER 2</span>
-        </div>
-        <span class="tile-value" id="stepper2TileVal">OFF</span>
-        <span class="tile-desc">Independent motor</span>
+      <span class="label-sub">Temperature</span>
+      <div class="readout">
+        <span class="readout-val temp-large" id="tempBig">0.0</span><span class="readout-unit">&deg;C</span>
+        <span class="readout-target">target <b id="setpointBig">0.0</b>&deg;C</span>
       </div>
-    </div>
-  </section>
+      <div class="progress-track"><div class="progress-fill" id="pwmFill"></div></div>
+      <span class="pwm-desc">Heater power <b><span id="pwmPct">0</span>%</b> (PWM <span id="pwmRaw">0</span>)</span>
 
-  <!-- PROCESS STEPS SECTION -->
-  <section id="process">
-    <div class="section-header">
-      <div>
-        <h2 class="section-title">Process steps</h2>
-        <p class="section-subtitle">Configure setpoints and manage each stage independently.</p>
-      </div>
-      <div class="stage-badge idle" id="activeStageBadge">IDLE</div>
-    </div>
-
-    <div class="process-grid">
-      <!-- Step 1 -->
-      <div class="step-card" id="step1Card">
-        <div class="step-top">
-          <div class="step-num-box">01</div>
+      <div class="stage-row" id="step1Card">
+        <div class="stage-head">
+          <span class="stage-name">Stage 1</span>
           <span class="step-pill" id="step1Pill">OFF</span>
         </div>
-        <h3 class="step-title">Heating &bull; Stage 1</h3>
-        <p class="step-desc">Bring material to the first target temperature.</p>
-
-        <label class="label-sub" for="step1SPInput">SETPOINT (0&ndash;260 &deg;C)</label>
+        <label class="label-sub" for="step1SPInput">Setpoint (0&ndash;260 &deg;C)</label>
         <div class="input-row">
           <input type="number" min="0" max="260" step="1" class="text-input" id="step1SPInput" oninput="markInputEdited(this)">
           <button class="btn-apply" id="step1ApplyBtn" onclick="setStep1SP(this)">Apply</button>
         </div>
-
         <button class="btn-step-toggle" id="step1ToggleBtn" onclick="toggleStep1()">Start Stage 1</button>
       </div>
 
-      <!-- Step 2 -->
-      <div class="step-card" id="step2Card">
-        <div class="step-top">
-          <div class="step-num-box">02</div>
+      <div class="stage-row" id="step2Card">
+        <div class="stage-head">
+          <span class="stage-name">Stage 2</span>
           <span class="step-pill" id="step2Pill">OFF</span>
         </div>
-        <h3 class="step-title">Heating &bull; Stage 2</h3>
-        <p class="step-desc">Continue heating to the second setpoint.</p>
-
-        <label class="label-sub" for="step2SPInput">SETPOINT (0&ndash;260 &deg;C)</label>
+        <label class="label-sub" for="step2SPInput">Setpoint (0&ndash;260 &deg;C)</label>
         <div class="input-row">
           <input type="number" min="0" max="260" step="1" class="text-input" id="step2SPInput" oninput="markInputEdited(this)">
           <button class="btn-apply" id="step2ApplyBtn" onclick="setStep2SP(this)">Apply</button>
         </div>
-
         <button class="btn-step-toggle" id="step2ToggleBtn" onclick="toggleStep2()">Start Stage 2</button>
       </div>
+    </section>
 
-      <!-- Step 3 -->
-      <div class="step-card" id="step3Card">
-        <div class="step-top">
-          <div class="step-num-box">03</div>
-          <span class="step-pill" id="step3Pill">OFF</span>
-        </div>
-        <h3 class="step-title">Stepper operation</h3>
-        <p class="step-desc">Drive the output wheel at the configured RPM.</p>
-
-        <label class="label-sub" for="rpmInput">TARGET SPEED (0.1&ndash;60 RPM)</label>
-        <div class="input-row">
-          <input type="number" min="0.1" max="60" step="0.1" class="text-input" id="rpmInput" oninput="markInputEdited(this)">
-          <button class="btn-apply" id="rpmApplyBtn" onclick="setRPM(this)">Apply</button>
-        </div>
-
-        <button class="btn-step-toggle" id="step3ToggleBtn" onclick="toggleStep3()">Start Stepper</button>
+    <!-- 3 PULLER (stepper 1, output wheel) -->
+    <section class="station" id="pullerCard" aria-labelledby="pullerTitle">
+      <div class="station-head">
+        <span class="step-num-box">3</span>
+        <h2 class="station-title" id="pullerTitle">Puller</h2>
+        <span class="step-pill" id="pullerPill">OFF</span>
       </div>
-    </div>
-  </section>
+      <p class="station-desc">Pulls filament through the hot end.</p>
 
-  <!-- LOWER ROW: MANUAL CONTROLS & TELEMETRY -->
-  <section class="lower-grid" id="manual">
-    <div class="panel">
-      <h3 class="panel-title">Manual controls</h3>
-      <p class="panel-desc">Direct hardware overrides for maintenance and testing.</p>
+      <span class="label-sub">Wheel speed</span>
+      <div class="readout"><span class="readout-val" id="rpmVal">0.0</span><span class="readout-unit">RPM</span></div>
+      <p class="hint" id="pullerHint" role="status"></p>
 
-      <div class="ctrl-row">
-        <div class="ctrl-info">
-          <span class="ctrl-title">Heater</span>
-          <span class="ctrl-helper">Toggle heater output directly</span>
-        </div>
-        <div class="btn-group">
-          <button class="btn-ctrl" id="btnHeaterOn" onclick="heaterOn()">Heater ON</button>
-          <button class="btn-ctrl active-off" id="btnHeaterOff" onclick="heaterOff()">Heater OFF</button>
-        </div>
+      <label class="label-sub" for="rpmInput">Target (0.1&ndash;60 RPM)</label>
+      <div class="input-row">
+        <input type="number" min="0.1" max="60" step="0.1" class="text-input" id="rpmInput" oninput="markInputEdited(this)">
+        <button class="btn-apply" id="rpmApplyBtn" onclick="setRPM(this)">Apply</button>
       </div>
+      <button class="btn-step-toggle" id="step3ToggleBtn" onclick="toggleStep3()">Start Puller</button>
+    </section>
 
-      <div class="ctrl-row">
-        <div class="ctrl-info">
-          <span class="ctrl-title">Stepper</span>
-          <span class="ctrl-helper">Toggle motor output directly</span>
-        </div>
-        <div class="btn-group">
-          <button class="btn-ctrl" id="btnStepperOn" onclick="stepperOn()">Stepper ON</button>
-          <button class="btn-ctrl active-off" id="btnStepperOff" onclick="stepperOff()">Stepper OFF</button>
-        </div>
-      </div>
+  </div>
 
-      <div class="ctrl-row">
-        <div class="ctrl-info">
-          <span class="ctrl-title">Stepper 2</span>
-          <span class="ctrl-helper">Independent motor, on/off</span>
-        </div>
-        <div class="btn-group">
-          <button class="btn-ctrl" id="btnStepper2On" onclick="stepper2On()">Stepper 2 ON</button>
-          <button class="btn-ctrl active-off" id="btnStepper2Off" onclick="stepper2Off()">Stepper 2 OFF</button>
-        </div>
-      </div>
-
-      <div class="ctrl-row">
-        <div class="ctrl-info">
-          <span class="ctrl-title">Stepper 2 speed</span>
-          <span class="ctrl-helper">Motor RPM (0.1&ndash;60)</span>
-        </div>
-        <div class="input-row">
-          <input type="number" min="0.1" max="60" step="0.1" class="text-input" id="rpm2Input" oninput="markInputEdited(this)">
-          <button class="btn-apply" id="rpm2ApplyBtn" onclick="setRPM2(this)">Apply</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h3 class="panel-title">Output wheel telemetry</h3>
-      <p class="panel-desc">Live drive speed and thermal readiness status.</p>
-
-      <div class="telemetry-row">
-        <span class="telemetry-label">Configured Target</span>
-        <span class="telemetry-val"><span id="targetRpmText">15.0</span> RPM</span>
-      </div>
-      <div class="telemetry-row">
-        <span class="telemetry-label">Thermal Stability</span>
-        <span class="telemetry-val" id="thermalStateText">Standby</span>
-      </div>
-
-      <div class="rpm-display-box">
-        <span class="rpm-display-label">CURRENT WHEEL SPEED</span>
-        <span class="rpm-display-val"><span id="rpmVal">0.0</span> RPM</span>
-      </div>
-    </div>
-  </section>
-
-  <!-- SAFETY NOTICE FOOTER -->
   <div class="safety-notice">
-    <span class="safety-dot"></span>
-    <span>Safety monitoring active &bull; Thermistor and wiring faults will shut down the heater.</span>
+    Safety monitoring active &bull; Thermistor and wiring faults shut down the heater and cutter. Speeds are commanded values, not measured.
   </div>
 
 </main>
@@ -949,7 +472,7 @@ function flashButton(btn, success = true) {
   btn.dataset.origText = origText;
   btn.classList.remove('saved', 'error');
   btn.classList.add(success ? 'saved' : 'error');
-  btn.innerText = success ? 'Saved \u2713' : 'Error';
+  btn.innerText = success ? 'Saved ✓' : 'Error';
   setTimeout(() => {
     btn.classList.remove('saved', 'error');
     btn.innerText = origText;
@@ -969,13 +492,6 @@ function clampInput(inputEl) {
   return val;
 }
 
-function heaterOn() { fetch('/heater?state=on'); }
-function heaterOff() { fetch('/heater?state=off'); }
-function stepperOn() { fetch('/stepper?state=on'); }
-function stepperOff() { fetch('/stepper?state=off'); }
-function stepper2On() { fetch('/stepper2?state=on'); }
-function stepper2Off() { fetch('/stepper2?state=off'); }
-
 function stopAll() {
   const btn = document.getElementById('estopBtn');
   if (btn.disabled) return;
@@ -984,6 +500,7 @@ function stopAll() {
   const timeout = setTimeout(() => controller.abort(), 3000);
   btn.disabled = true;
   btn.innerText = 'STOPPING...';
+  status.className = 'stop-status';
   status.innerText = 'Waiting for the device to acknowledge Stop All...';
   fetch('/stopall', { method: 'POST', signal: controller.signal })
     .then(r => {
@@ -992,6 +509,7 @@ function stopAll() {
       btn.innerHTML = '&#9632; STOP ALL';
     })
     .catch(() => {
+      status.className = 'stop-status warn';
       status.innerText = 'STOP UNCONFIRMED. Retry or use the physical power cutoff.';
       btn.innerText = 'RETRY STOP ALL';
     })
@@ -1004,29 +522,19 @@ function stopAll() {
 let currentStepState = 0;
 let heaterRunningState = false;
 let stepperRunningState = false;
+let cutterRunningState = false;
 
 function toggleStep1() {
-  if (currentStepState === 1 && heaterRunningState) {
-    fetch('/step1?state=off');
-  } else {
-    fetch('/step1?state=on');
-  }
+  fetch('/step1?state=' + (currentStepState === 1 && heaterRunningState ? 'off' : 'on'));
 }
-
 function toggleStep2() {
-  if (currentStepState === 2 && heaterRunningState) {
-    fetch('/step2?state=off');
-  } else {
-    fetch('/step2?state=on');
-  }
+  fetch('/step2?state=' + (currentStepState === 2 && heaterRunningState ? 'off' : 'on'));
 }
-
 function toggleStep3() {
-  if (stepperRunningState) {
-    fetch('/step3?state=off');
-  } else {
-    fetch('/step3?state=on');
-  }
+  fetch('/step3?state=' + (stepperRunningState ? 'off' : 'on'));
+}
+function toggleCutter() {
+  fetch('/stepper2?state=' + (cutterRunningState ? 'off' : 'on'));
 }
 
 function markInputEdited(input) {
@@ -1073,8 +581,26 @@ function setStep2SP(btn) { applyInput('step2SPInput', '/step2setpoint', btn); }
 function setRPM(btn) { applyInput('rpmInput', '/rpm', btn); }
 function setRPM2(btn) { applyInput('rpm2Input', '/rpm2', btn); }
 
+// Mirrors tripThermalFaultLocked() reasons in filament_maker.ino.
+const FAULT_CAUSES = {
+  "SENSOR DISCONNECTED": "Thermistor read below 0°C or invalid: open circuit, loose connector or broken wire. Heater is off.",
+  "OVERTEMP HAZARD": "Temperature exceeded 280°C absolute limit: shorted thermistor, stuck MOSFET/driver or runaway. Heater is off.",
+  "OVERTEMP RUNAWAY": "Stayed 15°C+ above setpoint for 10 s with heater on: driver stuck on or thermistor out of the block. Heater is off.",
+  "HEATING FAILED": "Rose under 2°C in 40 s at high power: heater cartridge loose/dead, blown fuse/no 12V, or thermistor out of the block.",
+  "INVALID PID OUTPUT": "PID produced a non-numeric output: check PID tuning values (Kp/Ki/Kd). Heater is off."
+};
+
 function resetFault() {
   fetch('/resetfault');
+}
+
+// One running/stopped look for a card or stage row, its pill and its start/stop button.
+function setRun(box, base, pill, onText, btn, on, startText, stopText) {
+  box.className = base + (on ? ' active' : '');
+  pill.className = 'step-pill' + (on ? ' active' : '');
+  pill.innerText = on ? onText : 'OFF';
+  btn.className = 'btn-step-toggle' + (on ? ' active' : '');
+  btn.innerText = on ? stopText : startText;
 }
 
 let isPolling = false;
@@ -1108,22 +634,49 @@ function pollStatus() {
       hasDeviceStatus = true;
       document.getElementById("liveStatusText").innerText = "Live readings refresh every 500 ms.";
 
-      // Temperature
+      // Hot end
       document.getElementById("tempBig").innerText = (data.temp <= -50) ? "ERR" : data.temp.toFixed(1);
       document.getElementById("setpointBig").innerText = data.setpoint.toFixed(1);
-
-      // PWM Output
       let pct = Math.round((data.pwm / 255) * 100);
       document.getElementById("pwmPct").innerText = pct;
       document.getElementById("pwmRaw").innerText = data.pwm;
       document.getElementById("pwmFill").style.width = pct + '%';
+      let hotReady = data.heater && data.stable;
+      let hotPill = document.getElementById("hotendPill");
+      document.getElementById("hotendCard").className = data.heater ? "station active" : "station";
+      hotPill.className = data.heater ? "step-pill active" : "step-pill";
+      hotPill.innerText = data.heater ? (data.stable ? "STABLE" : "HEATING") : "OFF";
 
-      // RPM & Telemetry
+      let stageText = data.stable ? "STABLE" : "HEATING";
+      setRun(document.getElementById("step1Card"), "stage-row", document.getElementById("step1Pill"), stageText,
+             document.getElementById("step1ToggleBtn"), data.step === 1 && data.heater, "Start Stage 1", "Stop Stage 1");
+      setRun(document.getElementById("step2Card"), "stage-row", document.getElementById("step2Pill"), stageText,
+             document.getElementById("step2ToggleBtn"), data.step === 2 && data.heater, "Start Stage 2", "Stop Stage 2");
+
+      // Puller
       document.getElementById("rpmVal").innerText = data.stepper ? data.rpm.toFixed(1) : "0.0";
-      document.getElementById("targetRpmText").innerText = data.rpm.toFixed(1);
-      document.getElementById("thermalStateText").innerText = data.heater
-        ? (data.stable ? "Stable at Setpoint" : "Heating to Setpoint")
-        : "Standby";
+      setRun(document.getElementById("pullerCard"), "station", document.getElementById("pullerPill"), "RUNNING",
+             document.getElementById("step3ToggleBtn"), data.stepper, "Start Puller", "Stop Puller");
+      let hint = document.getElementById("pullerHint");
+      if (hotReady) {
+        hint.className = "hint ok";
+        hint.innerText = "Hot end at temperature.";
+      } else if (data.stepper) {
+        hint.className = "hint warn";
+        hint.innerText = "Hot end not at temperature. The strip may snap.";
+      } else {
+        hint.className = "hint";
+        hint.innerText = "Start once the hot end is at temperature.";
+      }
+
+      // Cutter (older firmware omits these fields)
+      if (typeof data.stepper2 === 'boolean') {
+        cutterRunningState = data.stepper2;
+        document.getElementById("cutterRpmVal").innerText =
+          data.stepper2 && Number.isFinite(data.rpm2) ? data.rpm2.toFixed(1) : "0.0";
+        setRun(document.getElementById("cutterCard"), "station", document.getElementById("cutterPill"), "RUNNING",
+               document.getElementById("cutterToggleBtn"), data.stepper2, "Start Cutter", "Stop Cutter");
+      }
 
       // Keep unsaved edits even after the input loses focus.
       syncInput(document.getElementById("step1SPInput"), data.step1sp, pollVersion);
@@ -1144,7 +697,12 @@ function pollStatus() {
 
       if (data.fault) {
         fb.style.display = "flex";
-        document.getElementById("faultText").innerText = data.faultMsg;
+        // Optional fields: older firmware omits them. -100 is readTempC()'s no-sensor sentinel.
+        let faultNum = !Number.isFinite(data.faultTemp) ? "" :
+          data.faultTemp <= -100 ? " (no sensor reading)" :
+          " at " + data.faultTemp.toFixed(1) + "°C" + (Number.isFinite(data.faultSP) && data.faultSP > 0 ? " (setpoint " + data.faultSP.toFixed(1) + "°C)" : "");
+        document.getElementById("faultText").innerText = data.faultMsg + faultNum;
+        document.getElementById("faultCause").innerText = FAULT_CAUSES[data.faultMsg] || "Heater shut down. Check thermistor/wiring before resetting.";
         sysBadge.className = "badge-fault";
         sysBadgeDot.className = "status-dot offline";
         sysBadgeText.innerText = "SAFETY FAULT";
@@ -1155,134 +713,10 @@ function pollStatus() {
         sysBadgeText.innerText = "SYSTEM ONLINE";
       }
 
-      // Status Tiles & Dynamic Manual Buttons
-      let hTile = document.getElementById("heaterTile");
-      let hVal = document.getElementById("heaterTileVal");
-      let btnHOn = document.getElementById("btnHeaterOn");
-      let btnHOff = document.getElementById("btnHeaterOff");
-
-      if (data.heater) {
-        hTile.className = "status-tile";
-        hVal.innerText = "ON";
-        btnHOn.className = "btn-ctrl active-on";
-        btnHOff.className = "btn-ctrl";
-      } else {
-        hTile.className = "status-tile off";
-        hVal.innerText = "OFF";
-        btnHOn.className = "btn-ctrl";
-        btnHOff.className = "btn-ctrl active-off";
-      }
-
-      let sTile = document.getElementById("stepperTile");
-      let sVal = document.getElementById("stepperTileVal");
-      let btnSOn = document.getElementById("btnStepperOn");
-      let btnSOff = document.getElementById("btnStepperOff");
-
-      if (data.stepper) {
-        sTile.className = "status-tile";
-        sVal.innerText = "RUNNING";
-        btnSOn.className = "btn-ctrl active-on";
-        btnSOff.className = "btn-ctrl";
-      } else {
-        sTile.className = "status-tile off";
-        sVal.innerText = "OFF";
-        btnSOn.className = "btn-ctrl";
-        btnSOff.className = "btn-ctrl active-off";
-      }
-
-      if (typeof data.stepper2 === 'boolean') {
-        let s2Tile = document.getElementById("stepper2Tile");
-        let s2Val = document.getElementById("stepper2TileVal");
-        let btnS2On = document.getElementById("btnStepper2On");
-        let btnS2Off = document.getElementById("btnStepper2Off");
-        if (data.stepper2) {
-          s2Tile.className = "status-tile";
-          s2Val.innerText = "RUNNING";
-          btnS2On.className = "btn-ctrl active-on";
-          btnS2Off.className = "btn-ctrl";
-        } else {
-          s2Tile.className = "status-tile off";
-          s2Val.innerText = "OFF";
-          btnS2On.className = "btn-ctrl";
-          btnS2Off.className = "btn-ctrl active-off";
-        }
-      }
-
-      // Active Stage Badge (including Manual Override detection)
-      let stageBadge = document.getElementById("activeStageBadge");
-      if (data.step === 1 && data.heater) {
-        stageBadge.className = "stage-badge";
-        stageBadge.innerText = "STEP 1 ACTIVE";
-      } else if (data.step === 2 && data.heater) {
-        stageBadge.className = "stage-badge";
-        stageBadge.innerText = "STEP 2 ACTIVE";
-      } else if (data.step === 3 && data.stepper) {
-        stageBadge.className = "stage-badge";
-        stageBadge.innerText = "STEP 3 ACTIVE";
-      } else if (data.heater || data.stepper) {
-        stageBadge.className = "stage-badge manual";
-        stageBadge.innerText = "MANUAL OVERRIDE";
-      } else {
-        stageBadge.className = "stage-badge idle";
-        stageBadge.innerText = "IDLE";
-      }
-
       // Track states for toggle functions
       currentStepState = data.step;
       heaterRunningState = data.heater;
       stepperRunningState = data.stepper;
-
-      // Step Cards
-      let s1Card = document.getElementById("step1Card");
-      let s1Pill = document.getElementById("step1Pill");
-      let s1Btn = document.getElementById("step1ToggleBtn");
-      if (data.step === 1 && data.heater) {
-        s1Card.className = "step-card active";
-        s1Pill.className = "step-pill active";
-        s1Pill.innerText = data.stable ? "STABLE" : "HEATING";
-        s1Btn.className = "btn-step-toggle active";
-        s1Btn.innerText = "Stop Stage 1";
-      } else {
-        s1Card.className = "step-card";
-        s1Pill.className = "step-pill";
-        s1Pill.innerText = "OFF";
-        s1Btn.className = "btn-step-toggle";
-        s1Btn.innerText = "Start Stage 1";
-      }
-
-      let s2Card = document.getElementById("step2Card");
-      let s2Pill = document.getElementById("step2Pill");
-      let s2Btn = document.getElementById("step2ToggleBtn");
-      if (data.step === 2 && data.heater) {
-        s2Card.className = "step-card active";
-        s2Pill.className = "step-pill active";
-        s2Pill.innerText = data.stable ? "STABLE" : "HEATING";
-        s2Btn.className = "btn-step-toggle active";
-        s2Btn.innerText = "Stop Stage 2";
-      } else {
-        s2Card.className = "step-card";
-        s2Pill.className = "step-pill";
-        s2Pill.innerText = "OFF";
-        s2Btn.className = "btn-step-toggle";
-        s2Btn.innerText = "Start Stage 2";
-      }
-
-      let s3Card = document.getElementById("step3Card");
-      let s3Pill = document.getElementById("step3Pill");
-      let s3Btn = document.getElementById("step3ToggleBtn");
-      if (data.stepper) {
-        s3Card.className = "step-card active";
-        s3Pill.className = "step-pill active";
-        s3Pill.innerText = "RUNNING";
-        s3Btn.className = "btn-step-toggle active";
-        s3Btn.innerText = "Stop Stepper";
-      } else {
-        s3Card.className = "step-card";
-        s3Pill.className = "step-pill";
-        s3Pill.innerText = "OFF";
-        s3Btn.className = "btn-step-toggle";
-        s3Btn.innerText = "Start Stepper";
-      }
     })
     .catch(() => {
       document.getElementById("systemBadge").className = "badge-fault";

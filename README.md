@@ -35,8 +35,8 @@ before uploading.
 |---|---|
 | Thermistor ADC | 15; 100 kΩ NTC, beta 3950, 10 kΩ series resistor |
 | BTS7960 heater | enable 4, RPWM 5, LPWM 6 |
-| Stepper driver | STEP 18, DIR 17; 3200 pulses/motor revolution |
-| Stepper 2 driver | STEP 16, DIR 21 (fixed forward); 3200 pulses/motor revolution; RPM is motor RPM, no gear ratio |
+| Puller stepper (stepper 1) | STEP 18, DIR 17; 3200 pulses/motor revolution |
+| Cutter stepper (stepper 2) | STEP 16, DIR 21 (fixed forward); 3200 pulses/motor revolution; RPM is motor RPM, no gear ratio |
 | Output-wheel reduction | 25 motor turns per wheel turn |
 | LCD | SDA 8, SCL 9; I²C address `0x27`, 20×4 |
 | Rotary encoder | CLK 12, DT 13, switch 11 |
@@ -51,7 +51,9 @@ match them to the installed hardware and calibrate temperature/speed on-device.
 - Setpoints use **0–260°C** and output-wheel speed uses **0.1–60 RPM** through
   the web and serial interfaces. Invalid web/serial numeric commands
   are rejected; invalid saved settings fall back to defaults at startup.
-- Stages 1 and 2 select heating targets. Stage 3 controls the motor independently;
+- The dashboard follows the material path: **Cutter** (stepper 2) → **Hot end**
+  (heating stages 1 and 2) → **Puller** (stepper 1, stage 3). Each runs on its own;
+  starting or stopping the puller does not change the active heating stage, and
   stages do not advance automatically.
 - Web **Stop All** sends one `POST /stopall`, which disables both outputs under
   the state mutex before acknowledging. Failed/timed-out requests remain marked
@@ -64,17 +66,17 @@ match them to the installed hardware and calibrate temperature/speed on-device.
 
 ### LCD status and runtime
 
-The 20×4 main screen shows current/target temperature, commanded wheel RPM
-(zero when stopped), the current run timer, and the connected Wi-Fi network:
+The 20×4 main screen shows current/target temperature, commanded puller wheel
+RPM and cutter motor RPM (each zero when stopped), the current run timer, and the connected Wi-Fi network:
 
 ```text
 TEMP:215.3/220.0C
-RPM:15.0
+PULL:15.0 CUT:8.0
 RUNTIME 00:12:34
 WiFi: Network-B
 ```
 
-Runtime begins when the motor starts, freezes when it stops, and resets on the
+Runtime begins when the puller starts, freezes when it stops, and resets on the
 next start or reboot. Repeated ON commands and RPM changes do not reset it.
 Click the encoder to open the menu; thermal faults override every LCD screen.
 The bottom row reports the currently connected router's SSID, rather than the
@@ -84,14 +86,15 @@ network changes; the temperature, RPM and runtime rows stay in place.
 
 ### Control menu
 
-The six menu items are:
+The seven menu items are:
 
 1. Start/Stop Stage 1, with its configured temperature
 2. Start/Stop Stage 2, with its configured temperature
-3. Start/Stop Stepper
+3. Start/Stop Puller
 4. STOP ALL
 5. IP Address
 6. Wi-Fi Setup
+7. Start/Stop Cutter
 
 Rotate to move the `>` cursor and click to activate the selected item. The four
 visible rows scroll one line at a time as the cursor reaches the screen edge,
@@ -136,11 +139,11 @@ Serial runs at **115200 baud**, one command per line:
 | Command | Action |
 |---|---|
 | `T210` | Set active target temperature |
-| `S15` | Set output-wheel RPM |
+| `S15` | Set puller output-wheel RPM |
 | `P19`, `I0.45`, `D1.5` | Set a finite, non-negative PID gain |
-| `1`, `2`, `3` | Start a stage |
-| `!1`, `!2`, `!3` | Stop a stage |
-| `s`, `f`, `d` | Start motor, stop motor, reverse direction |
+| `1`, `2`, `3` | Start Stage 1, Stage 2, or the puller |
+| `!1`, `!2`, `!3` | Stop Stage 1, Stage 2, or the puller |
+| `s`, `f`, `d` | Start puller, stop puller, reverse puller direction |
 | `R` / `reset` | Reset PID / clear a safe thermal fault |
 | `m`, `v1`, `v0` | Toggle / enable / disable logging |
 | `e`, `E` | Encoder snapshot / five-second diagnostic |
