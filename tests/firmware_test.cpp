@@ -494,6 +494,36 @@ void testRunawayWatchdog() {
   faultReason = "";
 }
 
+// Feeds CLK/DT states (bit1=CLK, bit0=DT) through the encoder ISR.
+void feedEncoder(std::initializer_list<int> states) {
+  for (int s : states) {
+    inputValues[ENC_CLK_PIN] = s >> 1;
+    inputValues[ENC_DT_PIN] = s & 1;
+    encISR();
+  }
+}
+
+void testEncoderOneMovePerClick() {
+  // KY-040 measured on hardware: one click = 11 -> 01 -> 00 -> 10 -> 11 (4 edges).
+  encPrevState = 0b11; encDelta = 0;
+  feedEncoder({0b01, 0b00, 0b10, 0b11});
+  assert(encDelta == -1);
+  feedEncoder({0b10, 0b00, 0b01, 0b11});
+  assert(encDelta == 0);
+  feedEncoder({0b01, 0b11, 0b01, 0b00, 0b10, 0b11}); // contact bounce at rest, then one click
+  assert(encDelta == -1);
+  encDelta = 0;
+
+  uiMode = UI_MENU; menuIndex = 3;
+  feedEncoder({0b10, 0b00, 0b01, 0b11});
+  pollEncoder();
+  assert(menuIndex == 4); // one click moves exactly one menu item
+  feedEncoder({0b01, 0b00, 0b10, 0b11, 0b01, 0b00, 0b10, 0b11});
+  pollEncoder();
+  assert(menuIndex == 2);
+  uiMode = UI_STATUS;
+}
+
 int main() {
   setup();
   testRuntimeAndStatus();
@@ -506,5 +536,6 @@ int main() {
   testFaultPriorityAndStops();
   testStepper2Controls();
   testRunawayWatchdog();
-  std::cout << "Firmware checks passed: runtime, LCD, live Wi-Fi/SSID scrolling, scrolling menu, inactivity, password editor, scan, connect, persistence, cancel, faults, stops, stepper 2, runaway watchdog\n";
+  testEncoderOneMovePerClick();
+  std::cout << "Firmware checks passed: runtime, LCD, live Wi-Fi/SSID scrolling, scrolling menu, inactivity, password editor, scan, connect, persistence, cancel, faults, stops, stepper 2, runaway watchdog, encoder\n";
 }

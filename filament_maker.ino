@@ -109,7 +109,7 @@ const char* ap_ssid = "Filament-Maker-AP";
 const char* ap_pass = WIFI_AP_PASSWORD;
 
 // LAN / Station Wi-Fi credentials
-const char* mdns_hostname = "filament-maker-new";
+const char* mdns_hostname = "filament-maker-old";
 
 struct WifiCredentials {
   char ssid[33] = {};
@@ -153,9 +153,9 @@ IPAddress AP_SUBNET(255,255,255,0);
 #define I2C_SDA_PIN 8
 #define I2C_SCL_PIN 9
 
-#define ENC_CLK_PIN 12
+#define ENC_CLK_PIN 14
 #define ENC_DT_PIN 13
-#define ENC_SW_PIN 11
+#define ENC_SW_PIN 12
 
 LiquidCrystal_I2C lcd(0x27, 20, 4);
 
@@ -199,8 +199,9 @@ void openControlMenu(bool resetSelection) {
 }
 
 // Encoder ISR state
-volatile long encDelta = 0;
+volatile long encDelta = 0;       // Whole clicks (detents), consumed by pollEncoder
 volatile uint8_t encPrevState = 0;
+volatile int8_t encSubSteps = 0;  // Quadrature edges since the last rest position
 
 void IRAM_ATTR encISR() {
   uint8_t clk = digitalRead(ENC_CLK_PIN);
@@ -209,12 +210,20 @@ void IRAM_ATTR encISR() {
   uint8_t transition = (encPrevState << 2) | cur;
   if (transition == 0b0001 || transition == 0b0111 ||
       transition == 0b1000 || transition == 0b1110) {
-    encDelta++;
+    encSubSteps++;
   } else if (transition == 0b0010 || transition == 0b0100 ||
              transition == 0b1101 || transition == 0b1011) {
-    encDelta--;
+    encSubSteps--;
   }
   encPrevState = cur;
+  // KY-040 rests at CLK=DT=HIGH and one click is 4 edges. Count the click on
+  // reaching rest and resync there, so bounce or a missed edge can't drift.
+  // ponytail: >=2 tolerates up to 2 lost edges; half-step encoders would need rest at 00 too.
+  if (cur == 0b11) {
+    if (encSubSteps >= 2) encDelta++;
+    else if (encSubSteps <= -2) encDelta--;
+    encSubSteps = 0;
+  }
 }
 
 // Button debounce / long-press state
@@ -999,10 +1008,8 @@ void pollEncoder() {
   encDelta = 0;
   interrupts();
 
-  static long acc = 0;
-  acc += steps;
-  while (acc >= 2) { onEncoderTurn(1); acc -= 2; }
-  while (acc <= -2) { onEncoderTurn(-1); acc += 2; }
+  for (; steps > 0; steps--) onEncoderTurn(1);
+  for (; steps < 0; steps++) onEncoderTurn(-1);
 }
 
 void pollButton() {
