@@ -33,7 +33,7 @@ before uploading.
 
 | Component | GPIO / configuration |
 |---|---|
-| Thermistor ADC | 15; 100 kΩ NTC, beta 3950, 10 kΩ series resistor |
+| Thermistor ADC | 1; 100 kΩ NTC, beta 3950, 10 kΩ series resistor |
 | BTS7960 heater | enable 4, RPWM 5, LPWM 6 |
 | Puller stepper (stepper 1) | STEP 18, DIR 17; 3200 pulses/motor revolution |
 | Cutter stepper (stepper 2) | STEP 16, DIR 21 (fixed forward); 3200 pulses/motor revolution; RPM is motor RPM, no gear ratio |
