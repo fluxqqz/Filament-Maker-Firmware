@@ -192,3 +192,13 @@ Wi-Fi setup and fault screens and writes them to a standalone HTML page:
 c++ -std=c++17 tests/lcd_preview.cpp -o /tmp/lcd-preview
 /tmp/lcd-preview lcd-preview.html
 ```
+
+### Dashboard preview
+
+`tests/dashboard_preview.cjs` wraps the page from `dashboard.h` with a simulated
+device (heater model, cutter, puller, fault and Wi-Fi drop buttons) so the
+dashboard can be tried in a browser without hardware:
+
+```sh
+node tests/dashboard_preview.cjs dashboard-preview.html
+```
