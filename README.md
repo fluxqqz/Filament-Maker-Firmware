@@ -33,16 +33,18 @@ before uploading.
 
 | Component | GPIO / configuration |
 |---|---|
-| Thermistor ADC | 1; 100 kΩ NTC, beta 3950, 10 kΩ series resistor |
-| BTS7960 heater | enable 4, RPWM 5, LPWM 6 |
-| Puller stepper (stepper 1) | STEP 18, DIR 17; 3200 pulses/motor revolution |
-| Cutter stepper (stepper 2) | STEP 16, DIR 21 (fixed forward); 3200 pulses/motor revolution; RPM is motor RPM, no gear ratio |
+| Thermistor ADC | 2; 100 kΩ NTC, beta 3950, 10 kΩ series resistor |
+| BTS7960 heater | enable 7, RPWM 6, LPWM 5 |
+| Puller stepper (stepper 1) | STEP 36, DIR 35; 3200 pulses/motor revolution |
+| Cutter stepper (stepper 2) | STEP 47, DIR 21 (fixed forward); 3200 pulses/motor revolution; RPM is motor RPM, no gear ratio |
 | Output-wheel reduction | 25 motor turns per wheel turn |
 | LCD | SDA 8, SCL 9; I²C address `0x27`, 20×4 |
-| Rotary encoder | CLK 12, DT 13, switch 11 |
+| Rotary encoder | CLK 14, DT 13, switch 12 |
 
 Thermistor constants, microstepping and gearing live at the top of the sketch;
 match them to the installed hardware and calibrate temperature/speed on-device.
+To fit the thermistor constants against a reference thermometer, use the separate
+sketch in [`thermistor_calibration/`](thermistor_calibration/README.md).
 
 ## Operation
 
@@ -54,7 +56,11 @@ match them to the installed hardware and calibrate temperature/speed on-device.
 - The dashboard follows the material path: **Cutter** (stepper 2) → **Hot end**
   (heating stages 1 and 2) → **Puller** (stepper 1, stage 3). Each runs on its own;
   starting or stopping the puller does not change the active heating stage, and
-  stages do not advance automatically.
+  stages do not advance automatically. One exception: after **Stage 2** starts, the
+  puller starts once on its own when the block is within 4 °C of the Stage 2
+  setpoint. Starting or stopping the puller yourself before then cancels this, and
+  once it is running you stop it the usual way (it won't restart until Stage 2 is
+  started again).
 - Web **Stop All** sends one `POST /stopall`, which disables both outputs under
   the state mutex before acknowledging. Failed/timed-out requests remain marked
   **STOP UNCONFIRMED** and can be retried.

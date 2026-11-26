@@ -81,6 +81,7 @@ bool motor2Running = false;
 float rpm2 = 15.0; // Stepper 2 motor RPM, applied directly (no gear ratio)
 bool direction = HIGH;
 int currentStep = 0; // Heating stage: 0=idle, 1=Step 1, 2=Step 2. Puller state is motorRunning.
+bool autoPullArmed = false; // Stage 2 start: run the puller once when temp reaches setpoint.
 float step1Setpoint = 100.0;
 float step2Setpoint = 200.0;
 
@@ -393,6 +394,7 @@ void startStep2() {
   currentStep = 2;
   setpoint = step2Setpoint;
   setHeaterEnabledLocked(true);
+  autoPullArmed = !motorRunning;
   UNLOCK_STATE();
 
   lcdForce();
@@ -410,6 +412,7 @@ void stopStep2() {
 void startStep3() {
   LOCK_STATE();
   motorRunning = true; // Puller is independent: keep the active heating stage.
+  autoPullArmed = false; // User took control of the puller.
   updateStepperOutputLocked();
   UNLOCK_STATE();
 
@@ -419,6 +422,7 @@ void startStep3() {
 void stopStep3() {
   LOCK_STATE();
   motorRunning = false;
+  autoPullArmed = false; // User took control of the puller.
   updateStepperOutputLocked();
   UNLOCK_STATE();
 
@@ -1345,6 +1349,17 @@ void taskThermal(void* pvParameters) {
       }
     }
 
+    // Stage 2 reached temperature: start the puller once. Stop/STOP ALL/fault leave step != 2.
+    bool autoPulled = false;
+    if (autoPullArmed && currentStep == 2 && heaterEnabled && !thermalFault &&
+        fabs(setpoint - temp) <= STABLE_BAND) {
+      autoPullArmed = false;
+      motorRunning = true;
+      updateStepperOutputLocked();
+      lcdForce();
+      autoPulled = true;
+    }
+
     lastTemp = temp;
     // The same lock covers the decision and hardware commit, so a stop cannot
     // be overwritten by a thermal calculation or motor snapshot from before it.
@@ -1358,6 +1373,7 @@ void taskThermal(void* pvParameters) {
       Serial.print("SAFETY FAULT: ");
       Serial.println(newFaultReason);
     }
+    if (autoPulled) Serial.println("Stage 2 at temperature: puller auto-started");
     if (verb) {
       float err = sp - temp;
       Serial.print("Temp:"); Serial.print(temp, 1);

@@ -494,6 +494,39 @@ void testRunawayWatchdog() {
   faultReason = "";
 }
 
+void testStage2AutoPull() {
+  stopAll();
+  thermalFault = false;
+  step1Setpoint = 100; step2Setpoint = 200;
+
+  startStep2();
+  thermalCycleAt(150);
+  assert(!motorRunning); // Still heating.
+  thermalCycleAt(198);
+  assert(motorRunning && toneValues[STEP_PIN] > 0); // Within 4 C: puller starts once.
+  stopStep3();
+  for (int i = 0; i < 3; ++i) thermalCycleAt(200);
+  assert(!motorRunning); // Stopped by the user: stays stopped.
+
+  stopAll();
+  startStep2();
+  startStep3(); stopStep3(); // User took control before temperature was reached.
+  thermalCycleAt(200);
+  assert(!motorRunning);
+
+  stopAll();
+  startStep1();
+  thermalCycleAt(100);
+  assert(!motorRunning); // Stage 1 never auto-starts the puller.
+
+  stopAll();
+  startStep2();
+  stopStep2(); // Stage 2 cancelled before temperature.
+  thermalCycleAt(200);
+  assert(!motorRunning);
+  stopAll();
+}
+
 // Feeds CLK/DT states (bit1=CLK, bit0=DT) through the encoder ISR.
 void feedEncoder(std::initializer_list<int> states) {
   for (int s : states) {
@@ -537,5 +570,6 @@ int main() {
   testStepper2Controls();
   testRunawayWatchdog();
   testEncoderOneMovePerClick();
-  std::cout << "Firmware checks passed: runtime, LCD, live Wi-Fi/SSID scrolling, scrolling menu, inactivity, password editor, scan, connect, persistence, cancel, faults, stops, stepper 2, runaway watchdog, encoder\n";
+  testStage2AutoPull();
+  std::cout << "Firmware checks passed: runtime, LCD, live Wi-Fi/SSID scrolling, scrolling menu, inactivity, password editor, scan, connect, persistence, cancel, faults, stops, stepper 2, runaway watchdog, encoder, stage 2 auto-pull\n";
 }
