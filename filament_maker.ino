@@ -485,13 +485,19 @@ void restoreSavedWifi() {
   if (savedWifi.ssid[0]) WiFi.begin(savedWifi.ssid, savedWifi.password);
 }
 
-void requestWifiScan() {
+// Shared by the LCD and the web dashboard; TaskNetwork picks the request up.
+void queueWifiRequest(WifiRequest request, const WifiCredentials& credentials = WifiCredentials{}) {
   LOCK_STATE();
+  requestedWifi = credentials;
   ++wifiRequestVersion;
-  wifiRequest = WREQ_SCAN;
-  wifiSetupState = WIFI_SETUP_SCANNING;
+  wifiRequest = request;
+  wifiSetupState = request == WREQ_SCAN ? WIFI_SETUP_SCANNING : WIFI_SETUP_CONNECTING;
   wifiSetupMessage = "";
   UNLOCK_STATE();
+}
+
+void requestWifiScan() {
+  queueWifiRequest(WREQ_SCAN);
   wifiNetworkIndex = 0;
   wifiNameScrollStart = millis();
   wifiPasswordDraft = "";
@@ -521,15 +527,10 @@ void requestWifiConnect() {
     lcdForce();
     return;
   }
-  LOCK_STATE();
-  requestedWifi = WifiCredentials{};
-  wifiSelectedSSID.toCharArray(requestedWifi.ssid, sizeof(requestedWifi.ssid));
-  wifiPasswordDraft.toCharArray(requestedWifi.password, sizeof(requestedWifi.password));
-  ++wifiRequestVersion;
-  wifiRequest = WREQ_CONNECT;
-  wifiSetupState = WIFI_SETUP_CONNECTING;
-  wifiSetupMessage = "";
-  UNLOCK_STATE();
+  WifiCredentials credentials;
+  wifiSelectedSSID.toCharArray(credentials.ssid, sizeof(credentials.ssid));
+  wifiPasswordDraft.toCharArray(credentials.password, sizeof(credentials.password));
+  queueWifiRequest(WREQ_CONNECT, credentials);
   uiMode = UI_WIFI_PROGRESS;
   lcdForce();
 }
@@ -1087,6 +1088,46 @@ String buildStatus() {
   return json;
 }
 
+// SSIDs are arbitrary bytes from the air, so quote them safely.
+String jsonString(const String& s) {
+  String out = "\"";
+  for (unsigned int i = 0; i < s.length(); i++) {
+    unsigned char c = s[i];
+    if (c == '"' || c == '\\') { out += '\\'; out += (char)c; }
+    else if (c < 32) { char buf[7]; snprintf(buf, sizeof(buf), "\\u%04x", c); out += buf; }
+    else out += (char)c;
+  }
+  return out + "\"";
+}
+
+// Runs on TaskNetwork (web handler), which also owns savedWifi and the driver.
+String buildWifiStatus() {
+  static const char* const STATES[] = {"idle", "scanning", "ready", "connecting", "saving", "success", "failed"};
+  LOCK_STATE();
+  WifiSetupState state = wifiSetupState;
+  String message = wifiSetupMessage;
+  String newIP = wifiSetupIP;
+  std::vector<WifiNetwork> networks = wifiNetworks;
+  UNLOCK_STATE();
+
+  bool connected = WiFi.status() == WL_CONNECTED;
+  String json = "{\"state\":\"" + String(STATES[state]) + "\"";
+  json += ",\"message\":" + jsonString(message);
+  json += ",\"newIp\":" + jsonString(newIP);
+  json += ",\"connected\":" + jsonString(connected ? WiFi.SSID() : String(""));
+  json += ",\"ip\":" + jsonString(connected ? WiFi.localIP().toString() : String(""));
+  json += ",\"saved\":" + jsonString(String(savedWifi.ssid));
+  json += ",\"hostname\":\"" + String(mdns_hostname) + ".local\"";
+  json += ",\"networks\":[";
+  for (size_t i = 0; i < networks.size(); i++) {
+    if (i) json += ",";
+    json += "{\"ssid\":" + jsonString(networks[i].ssid) + ",\"rssi\":" + String(networks[i].rssi);
+    json += ",\"secure\":" + String(networks[i].auth != WIFI_AUTH_OPEN ? "true" : "false");
+    json += ",\"supported\":" + String(supportedWifiAuth(networks[i].auth) ? "true" : "false") + "}";
+  }
+  return json + "]}";
+}
+
 // =====================================================
 // SERIAL COMMANDS (Executed in loop() / Core 1)
 // =====================================================
@@ -1515,6 +1556,27 @@ void setup() {
   // Web routes
   server.on("/", []() { server.send(200, "text/html", webpage); });
   server.on("/status", []() { server.send(200, "application/json", buildStatus()); });
+  server.on("/wifi", HTTP_GET, []() { server.send(200, "application/json", buildWifiStatus()); });
+  server.on("/wifi/scan", HTTP_POST, []() {
+    queueWifiRequest(WREQ_SCAN);
+    lcdForce();
+    server.send(200, "text/plain", "OK");
+  });
+  server.on("/wifi/connect", HTTP_POST, []() {
+    String ssid = server.arg("ssid");
+    String password = server.arg("password");
+    // Empty password = open network, same rule as the LCD editor.
+    if (!ssid.length() || ssid.length() > 32 || !validWifiPassword(password, password.length() > 0)) {
+      server.send(400, "text/plain", "Network name 1-32 chars; password 8-63 chars or 64 hex (empty for open)");
+      return;
+    }
+    WifiCredentials credentials;
+    ssid.toCharArray(credentials.ssid, sizeof(credentials.ssid));
+    password.toCharArray(credentials.password, sizeof(credentials.password));
+    queueWifiRequest(WREQ_CONNECT, credentials);
+    lcdForce();
+    server.send(200, "text/plain", "OK");
+  });
   server.on("/stopall", HTTP_POST, []() {
     stopAll();
     server.send(200, "text/plain", "OK");

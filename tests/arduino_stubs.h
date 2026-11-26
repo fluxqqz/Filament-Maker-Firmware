@@ -59,6 +59,7 @@ public:
 #define IRAM_ATTR
 #define WIFI_AP_STA 3
 #define HTTP_POST 1
+#define HTTP_GET 2
 #define WIFI_STA_SSID ""
 #define WIFI_STA_PASSWORD ""
 #define WIFI_AP_PASSWORD "test-ap-only"
@@ -217,7 +218,8 @@ struct WebServer {
   template<class F> void on(const char* path, F handler) { routes[path] = handler; }
   template<class F> void on(const char* path, int, F handler) { routes[path] = handler; }
   String arg(const char* name) { return arguments[name]; }
-  void send(int code, const char*, const String&) { assert(lockDepth == 0); responseCode = code; }
+  String responseBody;
+  void send(int code, const char*, const String& body) { assert(lockDepth == 0); responseCode = code; responseBody = body; }
   void begin() {}
   void handleClient() {}
 };

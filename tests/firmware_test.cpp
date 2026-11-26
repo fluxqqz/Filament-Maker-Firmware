@@ -394,6 +394,42 @@ void testConnectionPersistenceAndCancel() {
   assert(WiFi.targetSSID == "new-router" && WiFi.targetPassword == "new-password");
 }
 
+void testWebWifi() {
+  resetWifi();
+  server.routes.at("/wifi/scan")();
+  assert(server.responseCode == 200 && wifiRequest == WREQ_SCAN && uiMode == UI_STATUS);
+  processWifiSetup();
+  WiFi.results = {{"q\"uote\\\n", -40, WIFI_AUTH_WPA2_PSK}, {"open", -60, WIFI_AUTH_OPEN},
+    {"corp", -70, WIFI_AUTH_WPA2_ENTERPRISE}};
+  WiFi.scanState = (int)WiFi.results.size();
+  processWifiSetup();
+  server.routes.at("/wifi")();
+  std::string body = server.responseBody.c_str();
+  assert(body.find("\"state\":\"ready\"") != std::string::npos);
+  assert(body.find("{\"ssid\":\"q\\\"uote\\\\\\u000a\",\"rssi\":-40,\"secure\":true,\"supported\":true}") != std::string::npos);
+  assert(body.find("\"ssid\":\"corp\",\"rssi\":-70,\"secure\":true,\"supported\":false") != std::string::npos);
+
+  server.arguments["ssid"] = "new-router";
+  server.arguments["password"] = "short";
+  server.routes.at("/wifi/connect")();
+  assert(server.responseCode == 400 && wifiRequest == WREQ_NONE);
+  server.arguments["ssid"] = "";
+  server.arguments["password"] = "";
+  server.routes.at("/wifi/connect")();
+  assert(server.responseCode == 400 && wifiRequest == WREQ_NONE);
+  server.arguments["ssid"] = "new-router";
+  server.arguments["password"] = "new-password";
+  server.routes.at("/wifi/connect")();
+  assert(server.responseCode == 200 && wifiRequest == WREQ_CONNECT);
+  processWifiSetup();
+  WiFi.connected(); processWifiSetup();
+  assert(wifiSetupState == WIFI_SETUP_SUCCESS && String(savedWifi.ssid) == "new-router");
+  server.routes.at("/wifi")();
+  body = server.responseBody.c_str();
+  assert(body.find("\"state\":\"success\"") != std::string::npos && body.find("\"saved\":\"new-router\"") != std::string::npos);
+  server.arguments.clear();
+}
+
 void testFaultPriorityAndStops() {
   resetWifi();
   queueConnection("router", "password");
@@ -566,10 +602,11 @@ int main() {
   testPasswordEditor();
   testScanAndSelection();
   testConnectionPersistenceAndCancel();
+  testWebWifi();
   testFaultPriorityAndStops();
   testStepper2Controls();
   testRunawayWatchdog();
   testEncoderOneMovePerClick();
   testStage2AutoPull();
-  std::cout << "Firmware checks passed: runtime, LCD, live Wi-Fi/SSID scrolling, scrolling menu, inactivity, password editor, scan, connect, persistence, cancel, faults, stops, stepper 2, runaway watchdog, encoder, stage 2 auto-pull\n";
+  std::cout << "Firmware checks passed: runtime, LCD, live Wi-Fi/SSID scrolling, scrolling menu, inactivity, password editor, scan, connect, persistence, cancel, web Wi-Fi, faults, stops, stepper 2, runaway watchdog, encoder, stage 2 auto-pull\n";
 }

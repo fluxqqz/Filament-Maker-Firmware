@@ -37,6 +37,7 @@ const toolbar = `
 // Mirrors the firmware's web handlers closely enough to exercise the UI.
 const sim = `
 const LIMITS = ${JSON.stringify(limits)};
+const simWifi = { state: "idle", message: "", newIp: "", connected: "", ip: "", saved: "", hostname: "filament-maker-old.local", networks: [] };
 const sim = {
   temp: 28.0, setpoint: 200.0, pwm: 0, rpm: 15.0, rpm2: 8.0, step1sp: 200.0, step2sp: 230.0,
   heater: false, stepper: false, stepper2: false, step: 0, stable: false,
@@ -86,6 +87,25 @@ window.fetch = function (url, opts = {}) {
     };
     let ok = true;
     switch (u.pathname) {
+      case "/wifi":
+        resolve({ ok: true, json: () => Promise.resolve(simWifi) });
+        return;
+      case "/wifi/scan":
+        simWifi.state = "scanning";
+        setTimeout(() => Object.assign(simWifi, { state: "ready", networks: [
+          { ssid: "Workshop", rssi: -48, secure: true, supported: true },
+          { ssid: "Guest <b>open</b>", rssi: -63, secure: false, supported: true },
+          { ssid: "Corp-Enterprise", rssi: -71, secure: true, supported: false }] }), 1500);
+        break;
+      case "/wifi/connect": {
+        const p = new URLSearchParams(opts.body);
+        const pw = p.get("password") || "";
+        ok = !!p.get("ssid") && (pw === "" || (pw.length >= 8 && pw.length <= 64));
+        if (!ok) { setTimeout(() => resolve({ ok, status: 400, text: () => Promise.resolve("Network name 1-32 chars; password 8-63 chars or 64 hex (empty for open)") }), 60); return; }
+        simWifi.state = "connecting";
+        setTimeout(() => Object.assign(simWifi, { state: "success", connected: p.get("ssid"), saved: p.get("ssid"), newIp: "192.168.0.57", ip: "192.168.0.57" }), 1500);
+        break;
+      }
       case "/status": {
         const { fastMode, wifiOffline, ...status } = sim;
         resolve({ ok: true, json: () => Promise.resolve(status) });

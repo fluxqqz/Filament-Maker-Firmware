@@ -349,6 +349,32 @@ body {
 }
 .btn-step-toggle.active:hover { background: var(--red-bg); }
 
+/* WI-FI SETUP CARD */
+.wifi-card { margin-bottom: 20px; }
+.wifi-list { list-style: none; display: grid; gap: 6px; margin-bottom: 14px; max-height: 264px; overflow-y: auto; }
+.wifi-net {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  background: #F9FAFB;
+  border: 1px solid var(--border-card);
+  border-radius: 6px;
+  padding: 0 12px;
+  font-size: 14px;
+  color: var(--text-main);
+  text-align: left;
+  cursor: pointer;
+}
+.wifi-net:hover { border-color: var(--navy-muted); }
+.wifi-net.selected { border-color: var(--navy-dark); box-shadow: 0 0 0 2px var(--navy-faint); }
+.wifi-net:disabled { color: var(--text-muted); cursor: not-allowed; }
+.wifi-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.wifi-meta { flex-shrink: 0; font-size: 12px; color: var(--text-muted); }
+.wifi-card .input-row .btn-apply { min-width: 96px; }
+.wifi-card .hint { height: auto; min-height: 20px; margin: 4px 0 0; white-space: normal; }
+
 /* SAFETY FOOTER NOTICE */
 .safety-notice {
   background: var(--orange-bg);
@@ -559,6 +585,26 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--navy-dark);
     </section>
 
   </div>
+
+  <!-- WI-FI SETUP -->
+  <section class="station wifi-card" aria-labelledby="wifiTitle">
+    <div class="station-head">
+      <h2 class="station-title" id="wifiTitle">Wi-Fi network</h2>
+      <button class="btn-apply" id="wifiScanBtn" onclick="scanWifi()">Scan</button>
+    </div>
+    <p class="station-desc" id="wifiCurrent">Checking connection&hellip;</p>
+    <ul class="wifi-list" id="wifiList" aria-label="Available networks"></ul>
+    <label class="label-sub" for="wifiSsid">Network name</label>
+    <div class="input-row">
+      <input type="text" class="text-input" id="wifiSsid" maxlength="32" autocomplete="off" oninput="highlightWifi()">
+    </div>
+    <label class="label-sub" for="wifiPass">Password (leave empty for open networks)</label>
+    <div class="input-row">
+      <input type="password" class="text-input" id="wifiPass" maxlength="64" autocomplete="off">
+      <button class="btn-apply" id="wifiConnectBtn" onclick="connectWifi(this)">Connect</button>
+    </div>
+    <p class="hint" id="wifiMsg" role="status"></p>
+  </section>
 
   <div class="safety-notice">
     Safety monitoring active &bull; Thermistor and wiring faults shut down the heater and cutter. Speeds are commanded values, not measured.
@@ -849,6 +895,107 @@ function pollStatus() {
     });
 }
 pollStatus();
+// ---- Wi-Fi setup ----
+let wifiBusy = false;
+let wifiPollTimer = null;
+let wifiHostname = 'the device hostname';
+
+function setWifiMsg(text, cls) {
+  const m = document.getElementById('wifiMsg');
+  m.textContent = text || '';
+  m.className = 'hint' + (cls ? ' ' + cls : '');
+}
+
+function highlightWifi() {
+  const ssid = document.getElementById('wifiSsid').value;
+  document.querySelectorAll('.wifi-net').forEach(b => b.classList.toggle('selected', b.dataset.ssid === ssid));
+}
+
+function renderWifi(w) {
+  document.getElementById('wifiCurrent').textContent = w.connected
+    ? 'Connected to ' + w.connected + ' (' + w.ip + '). The AP Filament-Maker-AP stays on as a fallback.'
+    : (w.saved ? 'Not connected. Saved network: ' + w.saved + '.' : 'Not connected to any network. Use the AP Filament-Maker-AP.');
+
+  const list = document.getElementById('wifiList');
+  list.replaceChildren();
+  // SSIDs come from the air: build with textContent, never innerHTML.
+  w.networks.forEach(n => {
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    b.className = 'wifi-net';
+    b.dataset.ssid = n.ssid;
+    b.disabled = !n.supported;
+    const name = document.createElement('span');
+    name.className = 'wifi-name';
+    name.textContent = n.ssid;
+    const meta = document.createElement('span');
+    meta.className = 'wifi-meta';
+    meta.textContent = (n.supported ? (n.secure ? 'Secured' : 'Open') : 'Unsupported') + ' · ' + n.rssi + ' dBm';
+    b.append(name, meta);
+    b.onclick = () => {
+      document.getElementById('wifiSsid').value = n.ssid;
+      document.getElementById('wifiPass').value = '';
+      highlightWifi();
+      document.getElementById(n.secure ? 'wifiPass' : 'wifiConnectBtn').focus();
+    };
+    li.append(b);
+    list.append(li);
+  });
+  highlightWifi();
+
+  const s = w.state;
+  document.getElementById('wifiScanBtn').disabled = s === 'scanning' || s === 'connecting' || s === 'saving';
+  if (s === 'scanning') setWifiMsg('Scanning… if you are on the home network, this page may drop out for a few seconds.');
+  else if (s === 'connecting' || s === 'saving') setWifiMsg('Connecting…');
+  else if (s === 'success') setWifiMsg('Connected and saved. On that network open http://' + w.newIp + ' or http://' + w.hostname, 'ok');
+  else if (s === 'failed') setWifiMsg(w.message || 'Failed.', 'warn');
+  else if (s === 'ready' && !w.networks.length) setWifiMsg('No networks found. Only 2.4 GHz networks are visible.');
+  else setWifiMsg(w.message);
+}
+
+function pollWifi() {
+  clearTimeout(wifiPollTimer);
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), 3000);
+  fetch('/wifi', { signal: controller.signal, cache: 'no-store' })
+    .then(r => r.ok ? r.json() : Promise.reject())
+    .then(w => {
+      wifiHostname = w.hostname;
+      renderWifi(w);
+      wifiBusy = w.state === 'scanning' || w.state === 'connecting' || w.state === 'saving';
+    })
+    .catch(() => {
+      if (wifiBusy) setWifiMsg('Waiting for the device… if it joined a different network, open http://' + wifiHostname + ' on that network.');
+    })
+    .finally(() => {
+      clearTimeout(t);
+      if (wifiBusy) wifiPollTimer = setTimeout(pollWifi, 1000);
+    });
+}
+
+function scanWifi() {
+  wifiBusy = true;
+  setWifiMsg('Starting scan…');
+  fetch('/wifi/scan', { method: 'POST' }).finally(() => { wifiPollTimer = setTimeout(pollWifi, 500); });
+}
+
+function connectWifi(btn) {
+  const ssid = document.getElementById('wifiSsid').value;
+  const password = document.getElementById('wifiPass').value;
+  if (!ssid) { setWifiMsg('Pick a network or type its name.', 'warn'); return; }
+  fetch('/wifi/connect', { method: 'POST', body: new URLSearchParams({ ssid, password }) })
+    .then(r => {
+      if (!r.ok) return r.text().then(t => Promise.reject(new Error(t)));
+      flashButton(btn, true);
+      document.getElementById('wifiPass').value = '';
+      wifiBusy = true;
+      setWifiMsg('Connecting…');
+      wifiPollTimer = setTimeout(pollWifi, 1000);
+    })
+    .catch(e => { flashButton(btn, false); setWifiMsg(e.message || 'Request failed.', 'warn'); });
+}
+
+pollWifi();
 setInterval(pollStatus, 500);
 </script>
 
